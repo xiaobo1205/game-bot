@@ -56,6 +56,43 @@ def find_color_regions(frame: np.ndarray, lower_hsv: tuple, upper_hsv: tuple, mi
     return regions
 
 
+def extract_hsv_range(
+    template: np.ndarray, std_devs: float = 1.5, min_value: int = 40, min_saturation: int = 30
+) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """Extract the dominant HSV color range from a template image.
+
+    Converts the template to HSV, filters out very dark and desaturated pixels
+    (likely background), then computes mean ± std_devs standard deviations
+    for each channel.
+
+    Args:
+        template: Template image as BGR numpy array.
+        std_devs: Number of standard deviations for the range (wider = more tolerant).
+        min_value: Minimum V channel to include (filters dark pixels).
+        min_saturation: Minimum S channel to include (filters grey/white pixels).
+
+    Returns:
+        (lower_hsv, upper_hsv) tuple of (H, S, V) bounds.
+    """
+    hsv = cv2.cvtColor(template, cv2.COLOR_BGR2HSV)
+
+    # Mask out dark and desaturated pixels (background noise)
+    mask = (hsv[:, :, 1] >= min_saturation) & (hsv[:, :, 2] >= min_value)
+    pixels = hsv[mask]
+
+    if len(pixels) < 10:
+        # Fallback: use all pixels if filtering removed too many
+        pixels = hsv.reshape(-1, 3)
+
+    mean = np.mean(pixels, axis=0)
+    std = np.std(pixels, axis=0)
+
+    lower = np.clip(mean - std_devs * std, [0, 0, 0], [179, 255, 255]).astype(int)
+    upper = np.clip(mean + std_devs * std, [0, 0, 0], [179, 255, 255]).astype(int)
+
+    return tuple(lower.tolist()), tuple(upper.tolist())
+
+
 def pixel_color_at(frame: np.ndarray, x: int, y: int) -> tuple[int, int, int]:
     """Get the BGR color at a specific pixel."""
     return tuple(frame[y, x].tolist())

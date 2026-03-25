@@ -1,78 +1,260 @@
-"""WoW fishing bot: detect bobber splash via template matching, then loot."""
+"""WoW fishing bot: sound-triggered catch with visual bobber location.
 
+Sound detects the splash moment. Template matching locates the bobber on screen
+shortly after activation (not after the splash), and caches the position.
+"""
+
+import os
 import random
 import time
+import threading
 from enum import Enum
+from pathlib import Path
 
 import cv2
 import numpy as np
 
-from bot.loop import GameBot
+from bot.screen import ScreenCapture
+from bot.audio import AudioMonitor
+from bot.hotkeys import HotkeyListener
 from bot.vision import find_template
 from bot.input import move_human, click, press
 
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp"}
+
+
+def find_latest_template(template_dir: str) -> str | None:
+    """Find the most recently modified image file in a directory."""
+    path = Path(template_dir)
+    if not path.is_dir():
+        return None
+    images = [f for f in path.iterdir() if f.suffix.lower() in IMAGE_EXTENSIONS]
+    if not images:
+        return None
+    latest = max(images, key=lambda f: f.stat().st_mtime)
+    return str(latest)
+
 
 class State(Enum):
-    WATCHING = "watching"
+    IDLE = "idle"
+    LOCATING = "locating"
+    LISTENING = "listening"
     CATCHING = "catching"
     LOOTING = "looting"
-    COOLDOWN = "cooldown"
 
 
-class FishingBot(GameBot):
-    """Watches for a bobber splash, moves mouse to it, right-clicks, and loots.
+class FishingBot:
+    """Sound-triggered fishing bot with visual bobber location and auto-loop.
+
+    Flow (auto-loop after F6):
+        1. F6 pressed → cast ('o') → wait → locate bobber → listen → catch → loot
+        2. Loops endlessly until F7 is pressed
 
     States:
-        WATCHING  — scanning each frame for template match
-        CATCHING  — matched! moving mouse + right-clicking
-        LOOTING   — pressing loot key after a pause
-        COOLDOWN  — brief pause before resuming watch
+        IDLE      — waiting for F6 activation
+        LOCATING  — screenshot taken, searching for bobber
+        LISTENING — bobber found, waiting for audio trigger
+        CATCHING  — moving mouse + right-clicking
+        LOOTING   — pressing loot key
     """
 
     def __init__(
         self,
-        template_path: str,
-        threshold: float = 0.75,
-        tick_rate: float = 1.0,
+        template_dir: str,
+        threshold: float = 0.7,
+        volume_multiplier: float = 3.0,
+        cooldown: float = 3.0,
         loot_key: str = "1",
+        cast_delay: float = 2.0,
         monitor: int = 1,
+        audio_device: int | None = None,
         start_key: str = "f6",
         stop_key: str = "f7",
+        locate_delay: float = 1.0,
     ):
-        super().__init__(tick_rate=tick_rate, monitor=monitor, start_key=start_key, stop_key=stop_key)
-        self.template = cv2.imread(template_path)
-        if self.template is None:
-            raise FileNotFoundError(f"Could not load template image: {template_path}")
+        # Vision: template directory for bobber location
+        self.template_dir = template_dir
+        if not Path(template_dir).is_dir():
+            raise FileNotFoundError(f"Template directory not found: {template_dir}")
+        self.template = None
+        self._template_path = None
         self.threshold = threshold
+        self.locate_delay = locate_delay
+
+        # Screen capture
+        self.screen = ScreenCapture(monitor=monitor)
+
+        # Audio monitor
+        self.audio = AudioMonitor(
+            threshold_multiplier=volume_multiplier,
+            cooldown=cooldown,
+            device=audio_device,
+        )
+        self.audio.on_trigger(self._on_splash)
+
+        # Hotkeys
+        self.hotkeys = HotkeyListener(start_key=start_key, stop_key=stop_key)
+        self.hotkeys.on_start(self._activate)
+        self.hotkeys.on_stop(self._deactivate)
+
+        # State
         self.loot_key = loot_key
-        self.state = State.WATCHING
+        self.cast_key = "o"  # hardcoded fishing hotkey
+        self.cast_delay = cast_delay
+        self.state = State.IDLE
         self.catch_count = 0
+        self._running = False
+        self._looping = False
+        self._splash_event = threading.Event()
+        self._activate_event = threading.Event()
+        self._bobber_pos: tuple[int, int] | None = None
 
-    def on_start(self) -> None:
-        h, w = self.template.shape[:2]
-        print(f"Template loaded ({w}x{h}px), threshold={self.threshold}")
-        print(f"Loot key: {self.loot_key}")
-        print(f"Scan interval: {self.tick_rate}s")
+    def _activate(self) -> None:
+        self._activate_event.set()
 
-    def on_frame(self, frame: np.ndarray) -> None:
-        if self.state != State.WATCHING:
+    def _deactivate(self) -> None:
+        self._looping = False
+        self.audio.enabled = False
+        self._bobber_pos = None
+        self._splash_event.set()  # unblock any waiting splash listener
+        self.state = State.IDLE
+        print("Bot PAUSED (F7) — loop stopped")
+
+    def _on_splash(self, rms: float, baseline: float) -> None:
+        """Called by audio monitor when a volume spike is detected."""
+        ratio = rms / baseline if baseline > 0 else 0
+        print(f"Splash detected! (volume {ratio:.1f}x baseline)")
+        self._splash_event.set()
+
+    def run(self) -> None:
+        """Start the bot. Locates bobber on activation, then listens for splash."""
+        self._running = True
+        self.hotkeys.register()
+        self.audio.start()
+
+        print(f"Template dir: {self.template_dir} (loads latest on each cycle)")
+        print(f"Match threshold: {self.threshold}")
+        print(f"Cast key: '{self.cast_key}' | Loot key: '{self.loot_key}'")
+        print(f"Cast delay: {self.cast_delay}s | Locate delay: {self.locate_delay}s")
+        print(f"Press {self.hotkeys.start_key.upper()} to start, "
+              f"{self.hotkeys.stop_key.upper()} to stop, Ctrl+C to quit.")
+
+        try:
+            while self._running:
+                # Wait for F6 activation
+                if self._activate_event.wait(timeout=0.1):
+                    self._activate_event.clear()
+                    self._looping = True
+                    self._loop()
+        except KeyboardInterrupt:
+            print("\nBot quit.")
+        finally:
+            self._running = False
+            self._looping = False
+            self.audio.stop()
+            self.hotkeys.unregister()
+
+    def _loop(self) -> None:
+        """Auto-loop: cast → locate → listen → catch → loot → repeat until F7."""
+        cycle = 0
+        while self._running and self._looping:
+            cycle += 1
+            print(f"\n{'='*40}")
+            print(f"  CYCLE #{cycle}")
+            print(f"{'='*40}")
+
+            # Cast: press the fishing key
+            print(f"  Casting (pressing '{self.cast_key}')...")
+            press(self.cast_key)
+            # Wait for cast animation + bobber to land
+            delay = self.cast_delay + random.uniform(-0.3, 0.5)
+            print(f"  Waiting {delay:.1f}s for bobber to land...")
+            time.sleep(delay)
+
+            if not self._looping:
+                break
+
+            self._run_cycle()
+
+            if not self._looping:
+                break
+
+            # Small pause between cycles
+            pause = random.uniform(0.5, 1.5)
+            print(f"  Pausing {pause:.1f}s before next cast...")
+            time.sleep(pause)
+
+        print(f"\nLoop ended after {cycle} cycle(s).")
+
+    def stop(self) -> None:
+        self._running = False
+
+    def _load_latest_template(self) -> bool:
+        """Load the most recently modified template from the template directory."""
+        latest = find_latest_template(self.template_dir)
+        if latest is None:
+            print(f"  WARNING: No image files found in {self.template_dir}")
+            return False
+        if latest != self._template_path:
+            self.template = cv2.imread(latest)
+            if self.template is None:
+                print(f"  WARNING: Could not read image: {latest}")
+                return False
+            self._template_path = latest
+            h, w = self.template.shape[:2]
+            print(f"  Loaded template: {Path(latest).name} ({w}x{h}px)")
+        return True
+
+    def _run_cycle(self) -> None:
+        """One full fishing cycle: locate bobber → listen for splash → catch."""
+        # Step 0: Load latest template
+        self.state = State.LOCATING
+        if not self._load_latest_template():
+            self.state = State.IDLE
             return
 
+        # Step 1: Wait, then locate bobber
+        print(f"Bot ACTIVE - locating bobber in {self.locate_delay}s...")
+        time.sleep(self.locate_delay)
+
+        frame = self.screen.grab()
         matches = find_template(frame, self.template, self.threshold)
+
         if not matches:
+            print("  WARNING: Could not locate bobber on screen. Press F6 to retry.")
+            self.state = State.IDLE
             return
 
-        # Take the first (best) match
-        x, y = matches[0]
+        self._bobber_pos = matches[0]
+        x, y = self._bobber_pos
+        print(f"  Bobber found at ({x}, {y})")
+
+        # Step 2: Enable audio and listen for splash
+        self.state = State.LISTENING
+        self.audio.enabled = True
+        print("  Listening for splash...")
+
+        # Wait for splash (or F7 to deactivate)
+        while self._running and self._looping and self.state == State.LISTENING:
+            if self._splash_event.wait(timeout=0.1):
+                self._splash_event.clear()
+                if self.state == State.LISTENING and self._looping:
+                    self._handle_catch()
+                    return  # back to _loop() for next cycle
+
+    def _handle_catch(self) -> None:
+        """Catch sequence: move to cached bobber position → click → loot."""
+        if self._bobber_pos is None:
+            print("  WARNING: No bobber position cached. Skipping.")
+            self.state = State.IDLE
+            return
+
+        x, y = self._bobber_pos
         self.catch_count += 1
-        print(f"[#{self.catch_count}] Bobber detected at ({x}, {y}) — catching!")
+        print(f"[#{self.catch_count}] Moving to bobber at ({x}, {y})")
 
+        # Move mouse to bobber with human-like path
         self.state = State.CATCHING
-        self._catch(x, y)
-
-    def _catch(self, x: int, y: int) -> None:
-        """Move to bobber, right-click, loot, then return to watching."""
-        # Move mouse with human-like curve
         move_human(x, y)
 
         # Small pause before clicking
@@ -82,7 +264,7 @@ class FishingBot(GameBot):
         click(x, y, button="right")
         print("  Right-clicked bobber")
 
-        # Wait for loot window to appear
+        # Wait for loot window
         self.state = State.LOOTING
         time.sleep(random.uniform(0.8, 1.5))
 
@@ -90,9 +272,9 @@ class FishingBot(GameBot):
         press(self.loot_key)
         print(f"  Pressed '{self.loot_key}' to loot")
 
-        # Cooldown before next scan
-        self.state = State.COOLDOWN
-        time.sleep(random.uniform(0.5, 1.0))
-
-        self.state = State.WATCHING
-        print("  Resuming watch...")
+        # Done — disable audio until next cycle re-enables it
+        time.sleep(random.uniform(0.3, 0.6))
+        self.audio.enabled = False
+        self._bobber_pos = None
+        self.state = State.IDLE
+        print("  Catch complete.")
