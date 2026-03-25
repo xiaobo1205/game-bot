@@ -4,18 +4,39 @@ import cv2
 import numpy as np
 
 
-def find_template(frame: np.ndarray, template: np.ndarray, threshold: float = 0.8) -> list[tuple[int, int]]:
+def find_template(
+    frame: np.ndarray, template: np.ndarray, threshold: float = 0.8, debug: bool = False
+) -> list[tuple[int, int]]:
     """Find all locations where template matches in the frame.
 
     Args:
         frame: Screenshot as BGR numpy array.
         template: Template image to search for.
         threshold: Match confidence threshold (0-1).
+        debug: If True, print best match score and save debug images.
 
     Returns:
         List of (x, y) center coordinates of matches.
     """
     result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+
+    if debug:
+        h, w = template.shape[:2]
+        print(f"  [DEBUG] Template: {w}x{h}px | Best match score: {max_val:.4f} "
+              f"(threshold: {threshold}) at ({max_loc[0]}, {max_loc[1]})")
+        # Save debug screenshot with best match location marked
+        debug_frame = frame.copy()
+        top_left = max_loc
+        bottom_right = (top_left[0] + w, top_left[1] + h)
+        color = (0, 255, 0) if max_val >= threshold else (0, 0, 255)
+        cv2.rectangle(debug_frame, top_left, bottom_right, color, 2)
+        cv2.putText(debug_frame, f"{max_val:.3f}", (top_left[0], top_left[1] - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        cv2.imwrite("debug_match.png", debug_frame)
+        cv2.imwrite("debug_template.png", template)
+        print("  [DEBUG] Saved debug_match.png and debug_template.png")
+
     locations = np.where(result >= threshold)
     h, w = template.shape[:2]
     points = []

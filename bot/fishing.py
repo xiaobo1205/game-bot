@@ -71,8 +71,10 @@ class FishingBot:
         start_key: str = "f6",
         stop_key: str = "f7",
         locate_delay: float = 1.0,
+        debug: bool = False,
     ):
         # Vision: template directory for bobber location
+        self.debug = debug
         self.template_dir = template_dir
         if not Path(template_dir).is_dir():
             raise FileNotFoundError(f"Template directory not found: {template_dir}")
@@ -218,7 +220,7 @@ class FishingBot:
         time.sleep(self.locate_delay)
 
         frame = self.screen.grab()
-        matches = find_template(frame, self.template, self.threshold)
+        matches = find_template(frame, self.template, self.threshold, debug=self.debug)
 
         if not matches:
             print("  WARNING: Could not locate bobber on screen. Press F6 to retry.")
