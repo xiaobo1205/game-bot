@@ -1,6 +1,10 @@
 """CLI entry point for the WoW fishing bot (sound-triggered + visual bobber location)."""
 
 import argparse
+import json
+import os
+from pathlib import Path
+
 import sounddevice as sd
 
 from bot.fishing import FishingBot
@@ -52,6 +56,8 @@ def main() -> None:
                         help="Hotkey to pause bot (default: F7)")
     parser.add_argument("--locate-delay", type=float, default=1.0,
                         help="Seconds to wait before locating bobber after F6 (default: 1.0)")
+    parser.add_argument("--config", default="config.json",
+                        help="Config file with ROI settings (default: config.json)")
     parser.add_argument("--debug", action="store_true",
                         help="Save debug screenshots showing match results")
     parser.add_argument("--list-devices", action="store_true",
@@ -62,9 +68,20 @@ def main() -> None:
         list_devices()
         return
 
-    import os
     if not os.path.isdir(args.template_dir):
         parser.error(f"Template directory not found: {args.template_dir}")
+
+    # Load ROI from config file if it exists
+    roi = None
+    config_path = Path(args.config)
+    if config_path.exists():
+        with open(config_path) as f:
+            config = json.load(f)
+        roi = config.get("roi")
+        if roi:
+            print(f"Loaded ROI from {args.config}: {roi}")
+    else:
+        print(f"No config file ({args.config}). Run select_roi.py to set ROI.")
 
     bot = FishingBot(
         template_dir=args.template_dir,
@@ -79,6 +96,7 @@ def main() -> None:
         stop_key=args.stop_key,
         locate_delay=args.locate_delay,
         debug=args.debug,
+        roi=roi,
     )
     bot.run()
 

@@ -17,7 +17,7 @@ import numpy as np
 from bot.screen import ScreenCapture
 from bot.audio import AudioMonitor
 from bot.hotkeys import HotkeyListener
-from bot.vision import find_template
+from bot.vision import find_template_multiscale
 from bot.input import move_human, click, press
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp"}
@@ -72,9 +72,11 @@ class FishingBot:
         stop_key: str = "f7",
         locate_delay: float = 1.0,
         debug: bool = False,
+        roi: dict | None = None,
     ):
         # Vision: template directory for bobber location
         self.debug = debug
+        self.roi = roi  # {"top": N, "left": N, "width": N, "height": N} or None
         self.template_dir = template_dir
         if not Path(template_dir).is_dir():
             raise FileNotFoundError(f"Template directory not found: {template_dir}")
@@ -135,7 +137,12 @@ class FishingBot:
         self.audio.start()
 
         print(f"Template dir: {self.template_dir} (loads latest on each cycle)")
-        print(f"Match threshold: {self.threshold}")
+        print(f"Match threshold: {self.threshold} (multi-scale 0.5x–1.5x)")
+        if self.roi:
+            r = self.roi
+            print(f"ROI: ({r['left']}, {r['top']}) {r['width']}x{r['height']}px")
+        else:
+            print("ROI: full screen (run select_roi.py to set one)")
         print(f"Cast key: '{self.cast_key}' | Loot key: '{self.loot_key}'")
         print(f"Cast delay: {self.cast_delay}s | Locate delay: {self.locate_delay}s")
         print(f"Press {self.hotkeys.start_key.upper()} to start, "
@@ -208,7 +215,11 @@ class FishingBot:
         return True
 
     def _locate_bobber(self) -> tuple[int, int] | None:
-        """Try to locate bobber on screen, retrying up to 3 times."""
+        """Try to locate bobber on screen, retrying up to 3 times.
+
+        If an ROI is configured, crops the screenshot to that region first,
+        then offsets the match coordinates back to full-screen.
+        """
         max_retries = 3
         for attempt in range(1, max_retries + 1):
             if not self._looping:
@@ -219,10 +230,26 @@ class FishingBot:
                 time.sleep(1.0)
 
             frame = self.screen.grab()
-            matches = find_template(frame, self.template, self.threshold, debug=self.debug)
+
+            # Crop to ROI if configured
+            offset_x, offset_y = 0, 0
+            if self.roi:
+                t = self.roi["top"]
+                l = self.roi["left"]
+                w = self.roi["width"]
+                h = self.roi["height"]
+                frame = frame[t:t + h, l:l + w]
+                offset_x, offset_y = l, t
+                if self.debug and attempt == 1:
+                    print(f"  [DEBUG] ROI: ({l}, {t}) {w}x{h}px")
+
+            matches = find_template_multiscale(
+                frame, self.template, self.threshold, debug=self.debug
+            )
 
             if matches:
-                return matches[0]
+                mx, my = matches[0]
+                return (mx + offset_x, my + offset_y)
 
             print(f"  Attempt {attempt}/{max_retries}: bobber not found.")
 

@@ -46,6 +46,84 @@ def find_template(
     return _deduplicate_points(points, min_dist=w // 2)
 
 
+def find_template_multiscale(
+    frame: np.ndarray,
+    template: np.ndarray,
+    threshold: float = 0.7,
+    scales: list[float] | None = None,
+    debug: bool = False,
+) -> list[tuple[int, int]]:
+    """Find template in frame using multi-scale matching.
+
+    Tries the template at multiple scales and returns the best match across
+    all scales if it exceeds the threshold.
+
+    Args:
+        frame: Screenshot as BGR numpy array (or ROI crop).
+        template: Template image to search for.
+        threshold: Match confidence threshold (0-1).
+        scales: List of scale factors to try. Default: 0.5 to 1.5 in 0.1 steps.
+        debug: If True, print scores per scale and save debug images.
+
+    Returns:
+        List with single (x, y) center coordinate of best match, or empty list.
+    """
+    if scales is None:
+        scales = [round(s * 0.1, 1) for s in range(5, 16)]  # 0.5 to 1.5
+
+    th, tw = template.shape[:2]
+    fh, fw = frame.shape[:2]
+
+    best_score = -1.0
+    best_loc = (0, 0)
+    best_scale = 1.0
+    best_tw, best_th = tw, th
+
+    for scale in scales:
+        new_w = int(tw * scale)
+        new_h = int(th * scale)
+
+        # Skip if scaled template is larger than the frame
+        if new_w >= fw or new_h >= fh or new_w < 5 or new_h < 5:
+            continue
+
+        scaled = cv2.resize(template, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        result = cv2.matchTemplate(frame, scaled, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+        if debug:
+            print(f"  [DEBUG] Scale {scale:.1f} ({new_w}x{new_h}px): score={max_val:.4f}")
+
+        if max_val > best_score:
+            best_score = max_val
+            best_loc = max_loc
+            best_scale = scale
+            best_tw, best_th = new_w, new_h
+
+    if debug:
+        print(f"  [DEBUG] Best: scale={best_scale:.1f} score={best_score:.4f} "
+              f"(threshold={threshold}) at ({best_loc[0]}, {best_loc[1]})")
+        # Save debug screenshot
+        debug_frame = frame.copy()
+        top_left = best_loc
+        bottom_right = (top_left[0] + best_tw, top_left[1] + best_th)
+        color = (0, 255, 0) if best_score >= threshold else (0, 0, 255)
+        cv2.rectangle(debug_frame, top_left, bottom_right, color, 2)
+        cv2.putText(debug_frame, f"{best_score:.3f} @{best_scale:.1f}x",
+                    (top_left[0], top_left[1] - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        cv2.imwrite("debug_match.png", debug_frame)
+        cv2.imwrite("debug_template.png", template)
+        print("  [DEBUG] Saved debug_match.png and debug_template.png")
+
+    if best_score >= threshold:
+        cx = best_loc[0] + best_tw // 2
+        cy = best_loc[1] + best_th // 2
+        return [(cx, cy)]
+
+    return []
+
+
 def find_color_regions(frame: np.ndarray, lower_hsv: tuple, upper_hsv: tuple, min_area: int = 100) -> list[dict]:
     """Find contiguous regions of a specific color range.
 
