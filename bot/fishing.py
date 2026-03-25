@@ -180,7 +180,7 @@ class FishingBot:
         if not self.pole_pos or self.bauble_interval <= 0:
             return False
         if self._last_bauble_time == 0.0:
-            return True  # first run, always apply
+            return False  # skip first run, start the timer
         return (time.time() - self._last_bauble_time) >= self.bauble_interval
 
     def _apply_bauble(self) -> None:
@@ -211,6 +211,9 @@ class FishingBot:
 
     def _loop(self) -> None:
         """Auto-loop: cast → locate → listen → catch → loot → repeat until F7."""
+        # Start the bauble timer on first loop activation
+        if self._last_bauble_time == 0.0:
+            self._last_bauble_time = time.time()
         cycle = 0
         while self._running and self._looping:
             cycle += 1
