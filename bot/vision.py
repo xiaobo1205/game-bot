@@ -192,6 +192,131 @@ def extract_hsv_range(
     return tuple(lower.tolist()), tuple(upper.tolist())
 
 
+# WoW fishing bobber color ranges in HSV
+# These are tuned for the standard bobber with blue feathers, red feathers, white body
+BOBBER_COLORS = {
+    "red": {
+        "lower": (0, 100, 100),
+        "upper": (10, 255, 255),
+        "lower2": (170, 100, 100),  # red wraps around in HSV
+        "upper2": (179, 255, 255),
+    },
+    "blue": {
+        "lower": (100, 80, 80),
+        "upper": (130, 255, 255),
+    },
+    "white": {
+        "lower": (0, 0, 180),
+        "upper": (179, 50, 255),
+    },
+}
+
+
+def find_bobber_by_color(
+    frame: np.ndarray,
+    min_area: int = 20,
+    cluster_radius: int = 60,
+    debug: bool = False,
+) -> list[tuple[int, int]]:
+    """Find the fishing bobber by detecting clustered red, blue, and white regions.
+
+    Looks for the distinctive bobber colors (red feathers, blue feathers, white body)
+    and finds locations where at least 2 of 3 colors appear near each other.
+
+    Args:
+        frame: Screenshot as BGR numpy array (or ROI crop).
+        min_area: Minimum pixel area for a color region to count.
+        cluster_radius: Max distance (px) between color centers to form a cluster.
+        debug: If True, print detected regions and save debug image.
+
+    Returns:
+        List of (x, y) center coordinates of detected bobber clusters.
+    """
+    import math
+
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+    def find_regions(lower, upper):
+        mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
+        return mask
+
+    # Red mask (wraps around H=0/180)
+    red_mask = find_regions(BOBBER_COLORS["red"]["lower"], BOBBER_COLORS["red"]["upper"])
+    red_mask2 = find_regions(BOBBER_COLORS["red"]["lower2"], BOBBER_COLORS["red"]["upper2"])
+    red_mask = cv2.bitwise_or(red_mask, red_mask2)
+
+    # Blue mask
+    blue_mask = find_regions(BOBBER_COLORS["blue"]["lower"], BOBBER_COLORS["blue"]["upper"])
+
+    # White mask
+    white_mask = find_regions(BOBBER_COLORS["white"]["lower"], BOBBER_COLORS["white"]["upper"])
+
+    def get_centroids(mask: np.ndarray) -> list[tuple[int, int]]:
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        centroids = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area >= min_area:
+                x, y, w, h = cv2.boundingRect(cnt)
+                centroids.append((x + w // 2, y + h // 2))
+        return centroids
+
+    red_pts = get_centroids(red_mask)
+    blue_pts = get_centroids(blue_mask)
+    white_pts = get_centroids(white_mask)
+
+    if debug:
+        print(f"  [DEBUG] Color detection: red={len(red_pts)} blue={len(blue_pts)} white={len(white_pts)}")
+
+    # Find clusters where at least 2 of 3 colors appear within cluster_radius
+    # Use all points as candidate centers
+    all_pts = red_pts + blue_pts + white_pts
+    if not all_pts:
+        return []
+
+    best_cluster = None
+    best_score = 0
+
+    for cx, cy in all_pts:
+        has_red = any(math.hypot(cx - px, cy - py) <= cluster_radius for px, py in red_pts)
+        has_blue = any(math.hypot(cx - px, cy - py) <= cluster_radius for px, py in blue_pts)
+        has_white = any(math.hypot(cx - px, cy - py) <= cluster_radius for px, py in white_pts)
+        score = int(has_red) + int(has_blue) + int(has_white)
+
+        if score > best_score:
+            best_score = score
+            # Compute centroid of all nearby colored points
+            nearby = []
+            for px, py in all_pts:
+                if math.hypot(cx - px, cy - py) <= cluster_radius:
+                    nearby.append((px, py))
+            avg_x = sum(p[0] for p in nearby) // len(nearby)
+            avg_y = sum(p[1] for p in nearby) // len(nearby)
+            best_cluster = (avg_x, avg_y)
+
+    if debug and best_cluster:
+        print(f"  [DEBUG] Best color cluster: ({best_cluster[0]}, {best_cluster[1]}) "
+              f"score={best_score}/3 colors")
+        # Save debug image
+        debug_frame = frame.copy()
+        # Draw all detected color points
+        for px, py in red_pts:
+            cv2.circle(debug_frame, (px, py), 4, (0, 0, 255), -1)
+        for px, py in blue_pts:
+            cv2.circle(debug_frame, (px, py), 4, (255, 0, 0), -1)
+        for px, py in white_pts:
+            cv2.circle(debug_frame, (px, py), 4, (255, 255, 255), -1)
+        # Mark best cluster
+        cv2.drawMarker(debug_frame, best_cluster, (0, 255, 0), cv2.MARKER_CROSS, 30, 2)
+        cv2.imwrite("debug_color_match.png", debug_frame)
+        print("  [DEBUG] Saved debug_color_match.png")
+
+    if best_score >= 2 and best_cluster:
+        return [best_cluster]
+
+    return []
+
+
 def pixel_color_at(frame: np.ndarray, x: int, y: int) -> tuple[int, int, int]:
     """Get the BGR color at a specific pixel."""
     return tuple(frame[y, x].tolist())

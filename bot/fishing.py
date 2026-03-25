@@ -17,7 +17,7 @@ import numpy as np
 from bot.screen import ScreenCapture
 from bot.audio import AudioMonitor
 from bot.hotkeys import HotkeyListener
-from bot.vision import find_template_multiscale
+from bot.vision import find_template_multiscale, find_bobber_by_color
 from bot.input import move_human, click, press
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp"}
@@ -294,12 +294,24 @@ class FishingBot:
                 if self.debug and attempt == 1:
                     print(f"  [DEBUG] ROI: ({l}, {t}) {w}x{h}px")
 
+            # Primary: multi-scale template matching
             matches = find_template_multiscale(
                 frame, self.template, self.threshold, debug=self.debug
             )
 
             if matches:
                 mx, my = matches[0]
+                print(f"  Found via template matching.")
+                return (mx + offset_x, my + offset_y)
+
+            # Fallback: color-based detection (red/blue feathers + white body)
+            if self.debug:
+                print(f"  Template failed, trying color detection...")
+            color_matches = find_bobber_by_color(frame, debug=self.debug)
+
+            if color_matches:
+                mx, my = color_matches[0]
+                print(f"  Found via color detection.")
                 return (mx + offset_x, my + offset_y)
 
             print(f"  Attempt {attempt}/{max_retries}: bobber not found.")
