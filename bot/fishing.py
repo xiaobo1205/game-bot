@@ -316,7 +316,7 @@ class FishingBot:
 
             print(f"  Attempt {attempt}/{max_retries}: bobber not found.")
 
-        print("  WARNING: Could not locate bobber after 3 attempts.")
+        print("  WARNING: Could not locate bobber after 3 attempts. Press F7 to stop or F6 to retry.")
         return None
 
     def _run_cycle(self) -> None:
@@ -324,6 +324,7 @@ class FishingBot:
         # Step 0: Load latest template
         self.state = State.LOCATING
         if not self._load_latest_template():
+            self._looping = False
             self.state = State.IDLE
             return
 
@@ -333,6 +334,9 @@ class FishingBot:
 
         pos = self._locate_bobber()
         if pos is None:
+            # Stop loop — don't auto-cast again. User must press F6 to retry.
+            self._looping = False
+            self.audio.enabled = False
             self.state = State.IDLE
             return
 
