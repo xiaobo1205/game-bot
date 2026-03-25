@@ -4,3 +4,4 @@ numpy>=1.26         # Pixel manipulation
 pyautogui>=0.9.54   # Mouse/keyboard control (fallback)
 pydirectinput>=1.0.4 # DirectInput for games that block pyautogui
 Pillow>=10.0        # Image processing
+keyboard>=0.13.5    # Global hotkeys (works while game is focused)
