@@ -121,6 +121,7 @@ class AudioMonitor:
         self._last_trigger = 0.0
         self._rms_history: deque[float] = deque(maxlen=baseline_window)
         self._enabled = False
+        self._suppress_until: float = 0.0  # ignore triggers until this epoch
         self._debug = debug
         self._debug_counter = 0
 
@@ -136,6 +137,10 @@ class AudioMonitor:
             # false triggers because the new baseline is built from too few
             # near-silence samples
             self._last_trigger = 0.0
+
+    def suppress(self, seconds: float) -> None:
+        """Suppress triggers for the next N seconds."""
+        self._suppress_until = time.time() + seconds
 
     def on_trigger(self, callback) -> None:
         """Set the callback to fire when a splash is detected."""
@@ -198,10 +203,16 @@ class AudioMonitor:
             baseline = 0.001
 
         now = time.time()
+
+        # Suppressed period — ignore all triggers
+        if now < self._suppress_until:
+            return
+
         # Require BOTH relative spike (vs baseline) AND absolute minimum RMS
         # to avoid false triggers from mouse clicks / keyboard sounds when
-        # the ambient level is near-silence
-        min_abs_rms = 0.01
+        # the ambient level is near-silence. The splash sound in WoW is
+        # loud enough to produce RMS > 0.05.
+        min_abs_rms = 0.05
         if rms > baseline * self.threshold_multiplier and rms > min_abs_rms:
             if now - self._last_trigger > self.cooldown:
                 self._last_trigger = now

@@ -370,8 +370,8 @@ class FishingBot:
         # Step 3: Warmup — let cast/mouse sounds fade before listening
         warmup = 3.0
         print(f"  Warming up audio baseline ({warmup}s)...")
-        self.audio.enabled = True  # start collecting samples but won't trigger (need 60+)
-        self._rms_at_enable = time.time()
+        self.audio.suppress(warmup)  # hard-block triggers during warmup
+        self.audio.enabled = True
         time.sleep(warmup)
 
         # Now clear any splash events and start listening
