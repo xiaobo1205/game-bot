@@ -6,8 +6,6 @@ import os
 from pathlib import Path
 
 import cv2
-import sounddevice as sd
-
 from bot.fishing import FishingBot
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp"}
@@ -237,22 +235,8 @@ def run_setup(image_path: str | None, config_path: str) -> None:
 
 def list_devices() -> None:
     """Print all available audio devices."""
-    print("Available audio devices:")
-    print("-" * 70)
-    for i, dev in enumerate(sd.query_devices()):
-        direction = ""
-        if dev["max_input_channels"] > 0:
-            direction += "IN"
-        if dev["max_output_channels"] > 0:
-            direction += "/OUT" if direction else "OUT"
-        print(f"  [{i:2d}] {dev['name']:<50s} {direction}")
-    print("-" * 70)
-
-    # Show host APIs
-    print("\nHost APIs:")
-    for i, api in enumerate(sd.query_hostapis()):
-        default = " (default)" if i == sd.default.hostapi else ""
-        print(f"  [{i}] {api['name']}{default}")
+    from bot.audio import list_all_devices
+    list_all_devices()
 
 
 def main() -> None:

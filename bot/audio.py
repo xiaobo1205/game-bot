@@ -1,7 +1,7 @@
 """Audio monitoring for detecting sound spikes (e.g., WoW bobber splash).
 
-Uses sounddevice with WASAPI loopback to capture system audio output
-without needing a virtual audio cable.
+Uses pyaudiowpatch with WASAPI loopback to capture system audio output
+directly — no Stereo Mix or virtual audio cable needed.
 """
 
 import threading
@@ -9,58 +9,88 @@ import time
 from collections import deque
 
 import numpy as np
-import sounddevice as sd
+import pyaudiowpatch as pyaudio
 
 
-def list_loopback_devices() -> list[dict]:
-    """List available WASAPI loopback devices for capturing system audio."""
-    devices = []
-    for i, dev in enumerate(sd.query_devices()):
-        # WASAPI loopback devices typically have "Loopback" in the name
-        # or are output devices that can be opened as loopback
-        if dev["max_input_channels"] > 0 or "loopback" in dev["name"].lower():
-            devices.append({"index": i, "name": dev["name"], "channels": dev["max_input_channels"],
-                            "sample_rate": dev["default_samplerate"]})
-    return devices
+def find_loopback_device(p: pyaudio.PyAudio, preferred_name: str | None = None) -> dict | None:
+    """Auto-detect the best WASAPI loopback device.
 
+    Prefers the default speakers' loopback. If preferred_name is given,
+    tries to match that device name first.
 
-def find_loopback_device() -> int | None:
-    """Auto-detect the best audio input device for capturing system sound.
-
-    Prefers Stereo Mix (captures all system audio output as an input device).
-    Falls back to any input device.
-
-    Returns the device index or None if not found.
+    Returns device info dict or None.
     """
-    devices = sd.query_devices()
+    try:
+        wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
+    except OSError:
+        print("  WARNING: WASAPI host API not available.")
+        return None
 
-    # Prefer "Stereo Mix" — it captures system audio as an input device
-    for i, dev in enumerate(devices):
-        if "stereo mix" in dev["name"].lower() and dev["max_input_channels"] > 0:
-            print(f"  Auto-detected Stereo Mix: [{i}] {dev['name']}")
-            return i
+    # Collect all loopback devices
+    loopback_devices = []
+    for i in range(p.get_device_count()):
+        dev = p.get_device_info_by_index(i)
+        if dev.get("isLoopbackDevice", False):
+            loopback_devices.append(dev)
 
-    # Fallback: any input device with "loopback" or "mix" in name
-    for i, dev in enumerate(devices):
-        name = dev["name"].lower()
-        if dev["max_input_channels"] > 0 and ("loopback" in name or "mix" in name):
-            print(f"  Auto-detected loopback device: [{i}] {dev['name']}")
-            return i
+    if not loopback_devices:
+        print("  WARNING: No WASAPI loopback devices found.")
+        return None
 
-    # Last resort: any input device
-    for i, dev in enumerate(devices):
-        if dev["max_input_channels"] > 0:
-            return i
+    # Try preferred name first
+    if preferred_name:
+        for dev in loopback_devices:
+            if preferred_name.lower() in dev["name"].lower():
+                print(f"  Matched preferred device: [{dev['index']}] {dev['name']}")
+                return dev
 
-    return None
+    # Try default output device's loopback
+    default_output = p.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
+    default_name = default_output["name"].lower()
+    for dev in loopback_devices:
+        if default_name in dev["name"].lower():
+            print(f"  Auto-detected loopback for default output: [{dev['index']}] {dev['name']}")
+            return dev
+
+    # Fallback: first loopback device
+    dev = loopback_devices[0]
+    print(f"  Fallback loopback device: [{dev['index']}] {dev['name']}")
+    return dev
+
+
+def list_all_devices() -> None:
+    """Print all available audio devices with loopback info."""
+    p = pyaudio.PyAudio()
+    print("Available audio devices:")
+    print("-" * 70)
+    for i in range(p.get_device_count()):
+        dev = p.get_device_info_by_index(i)
+        ch_in = dev["maxInputChannels"]
+        ch_out = dev["maxOutputChannels"]
+        loopback = " [LOOPBACK]" if dev.get("isLoopbackDevice", False) else ""
+        direction = ""
+        if ch_in > 0:
+            direction += "IN"
+        if ch_out > 0:
+            direction += "/OUT" if direction else "OUT"
+        print(f"  [{i:2d}] {dev['name']:<50s} {direction}{loopback}")
+    print("-" * 70)
+
+    try:
+        wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
+        default_out = p.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
+        print(f"\nDefault WASAPI output: [{default_out['index']}] {default_out['name']}")
+    except OSError:
+        print("\nWASAPI not available.")
+
+    p.terminate()
 
 
 class AudioMonitor:
-    """Monitors system audio for volume spikes.
+    """Monitors system audio for volume spikes via WASAPI loopback.
 
-    Runs a background thread that continuously samples audio, maintains
-    a rolling baseline of ambient volume, and fires a callback when
-    the volume exceeds baseline * threshold_multiplier.
+    Uses pyaudiowpatch to capture audio from any output device's loopback
+    without needing Stereo Mix or a virtual audio cable.
     """
 
     def __init__(
@@ -72,29 +102,24 @@ class AudioMonitor:
         baseline_window: int = 100,
         debug: bool = False,
     ):
-        """
-        Args:
-            threshold_multiplier: Volume must exceed baseline * this to trigger.
-            cooldown: Seconds to wait after a trigger before allowing another.
-            device: Audio device index. None = auto-detect loopback.
-            block_duration: Audio chunk size in seconds (~50ms).
-            baseline_window: Number of chunks to average for baseline.
-        """
         self.threshold_multiplier = threshold_multiplier
         self.cooldown = cooldown
         self.block_duration = block_duration
         self.baseline_window = baseline_window
 
-        if device is None:
-            self.device = find_loopback_device()
-        else:
-            self.device = device
+        self._p = pyaudio.PyAudio()
 
-        self._callback = None
+        # Find the loopback device
+        if device is not None:
+            self._device_info = self._p.get_device_info_by_index(device)
+        else:
+            self._device_info = find_loopback_device(self._p)
+
+        self._callback_fn = None
         self._running = False
         self._thread = None
         self._last_trigger = 0.0
-        self._rms_history = deque(maxlen=baseline_window)
+        self._rms_history: deque[float] = deque(maxlen=baseline_window)
         self._enabled = False
         self._debug = debug
         self._debug_counter = 0
@@ -112,22 +137,20 @@ class AudioMonitor:
             self._last_trigger = 0.0
 
     def on_trigger(self, callback) -> None:
-        """Set the callback to fire when a splash is detected.
-
-        callback receives (rms, baseline) as arguments.
-        """
-        self._callback = callback
+        """Set the callback to fire when a splash is detected."""
+        self._callback_fn = callback
 
     def start(self) -> None:
         """Start monitoring audio in a background thread."""
-        if self.device is None:
+        if self._device_info is None:
             print("WARNING: No loopback audio device found. Sound detection disabled.")
             print("Run with --list-devices to see available devices.")
             return
 
-        dev_info = sd.query_devices(self.device)
-        print(f"Audio device: {dev_info['name']}")
-        print(f"  Sample rate: {dev_info['default_samplerate']}Hz")
+        dev = self._device_info
+        print(f"Audio device: {dev['name']}")
+        print(f"  Sample rate: {dev['defaultSampleRate']}Hz, Channels: {dev['maxInputChannels']}")
+        print(f"  Loopback: {dev.get('isLoopbackDevice', False)}")
         print(f"  Threshold: {self.threshold_multiplier}x ambient, Cooldown: {self.cooldown}s")
 
         self._running = True
@@ -139,22 +162,23 @@ class AudioMonitor:
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
+        self._p.terminate()
 
     def _compute_rms(self, audio_data: np.ndarray) -> float:
         """Compute root mean square of audio data."""
         return float(np.sqrt(np.mean(audio_data.astype(np.float64) ** 2)))
 
-    def _audio_callback(self, indata, frames, time_info, status) -> None:
-        """Called by sounddevice for each audio block (runs in audio thread)."""
-        if status:
-            if self._debug:
-                print(f"  [AUDIO] Stream status: {status}")
-            return
+    def _process_block(self, data: bytes, channels: int) -> None:
+        """Process one audio block: compute RMS, check for spike, fire callback."""
+        audio = np.frombuffer(data, dtype=np.float32)
+        if channels > 1:
+            audio = audio.reshape(-1, channels)
+            audio = np.mean(audio, axis=1)  # mix to mono
 
-        rms = self._compute_rms(indata)
+        rms = self._compute_rms(audio)
         self._rms_history.append(rms)
 
-        # Periodic debug: print RMS every ~2 seconds (every 40 blocks at 50ms each)
+        # Periodic debug output
         self._debug_counter += 1
         if self._debug and self._debug_counter % 40 == 0:
             baseline = float(np.median(list(self._rms_history))) if len(self._rms_history) >= 5 else 0.0
@@ -165,7 +189,6 @@ class AudioMonitor:
         if not self._enabled:
             return
 
-        # Need enough samples for a baseline
         if len(self._rms_history) < 20:
             return
 
@@ -177,35 +200,42 @@ class AudioMonitor:
         if rms > baseline * self.threshold_multiplier:
             if now - self._last_trigger > self.cooldown:
                 self._last_trigger = now
-                if self._callback:
-                    self._callback(rms, baseline)
+                if self._callback_fn:
+                    self._callback_fn(rms, baseline)
 
     def _monitor_loop(self) -> None:
-        """Background thread: open callback-based audio stream and keep it alive."""
-        dev_info = sd.query_devices(self.device)
-        sample_rate = int(dev_info["default_samplerate"])
-        channels = dev_info.get("max_input_channels", 0)
+        """Background thread: open WASAPI loopback stream and read audio."""
+        dev = self._device_info
+        sample_rate = int(dev["defaultSampleRate"])
+        channels = dev["maxInputChannels"]
         block_size = int(sample_rate * self.block_duration)
 
         if channels == 0:
-            print(f"  ERROR: Device '{dev_info['name']}' is output-only. "
-                  f"Use an input device like Stereo Mix. Run --list-devices.")
+            print(f"  ERROR: Device '{dev['name']}' has no input channels.")
             self._running = False
             return
 
         try:
-            with sd.InputStream(
-                device=self.device,
-                samplerate=sample_rate,
+            stream = self._p.open(
+                format=pyaudio.paFloat32,
                 channels=channels,
-                blocksize=block_size,
-                dtype="float32",
-                callback=self._audio_callback,
-            ):
-                print(f"  Audio stream opened successfully on device {self.device}")
-                # Keep thread alive while stream runs via callback
-                while self._running:
-                    time.sleep(0.1)
+                rate=sample_rate,
+                input=True,
+                input_device_index=dev["index"],
+                frames_per_buffer=block_size,
+            )
+            print(f"  WASAPI loopback stream opened on [{dev['index']}] {dev['name']}")
+
+            while self._running:
+                try:
+                    data = stream.read(block_size, exception_on_overflow=False)
+                    self._process_block(data, channels)
+                except OSError:
+                    # Stream hiccup, skip this block
+                    pass
+
+            stream.stop_stream()
+            stream.close()
 
         except Exception as e:
             print(f"Audio monitor error: {e}")
