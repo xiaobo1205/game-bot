@@ -47,18 +47,29 @@ def main():
     parser.add_argument("--config", default="config.json", help="Config file to save ROI (default: config.json)")
     args = parser.parse_args()
 
-    # Load from file or capture live
-    if args.image:
-        frame = cv2.imread(args.image)
+    # Load from file, auto-detect latest in screenshots/, or capture live
+    image_path = args.image
+    if not image_path:
+        # Auto-detect most recent screenshot
+        screenshots_dir = Path("screenshots")
+        if screenshots_dir.is_dir():
+            extensions = {".png", ".jpg", ".jpeg", ".bmp"}
+            images = [f for f in screenshots_dir.iterdir() if f.suffix.lower() in extensions]
+            if images:
+                image_path = str(max(images, key=lambda f: f.stat().st_mtime))
+                print(f"Auto-detected latest screenshot: {image_path}")
+
+    if image_path:
+        frame = cv2.imread(image_path)
         if frame is None:
-            print(f"Error: Could not load image: {args.image}")
+            print(f"Error: Could not load image: {image_path}")
             return
-        print(f"Loaded: {args.image}")
+        print(f"Loaded: {image_path}")
     else:
         from bot.screen import ScreenCapture
         screen = ScreenCapture(monitor=args.monitor)
         frame = screen.grab()
-        print("Captured live screenshot.")
+        print("No screenshots found. Captured live screenshot.")
 
     # Scale down for display if too large
     h, w = frame.shape[:2]
