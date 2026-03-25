@@ -184,15 +184,15 @@ class FishingBot:
         return (time.time() - self._last_bauble_time) >= self.bauble_interval
 
     def _apply_bauble(self) -> None:
-        """Apply bauble to fishing pole: press 'i', click pole, close bags."""
+        """Apply bauble to fishing pole: press 'i' (action bar), click pole on screen."""
         if not self.pole_pos:
             return
 
         px, py = self.pole_pos["x"], self.pole_pos["y"]
         print(f"\n  ** APPLYING BAUBLE **")
-        print(f"  Opening bags (pressing 'i')...")
+        print(f"  Selecting bauble (pressing 'i')...")
         press("i")
-        time.sleep(random.uniform(0.8, 1.2))
+        time.sleep(random.uniform(0.5, 0.8))
 
         print(f"  Moving to fishing pole at ({px}, {py})...")
         move_human(px, py)
@@ -201,10 +201,6 @@ class FishingBot:
         print(f"  Left-clicking fishing pole...")
         click(px, py, button="left")
         time.sleep(random.uniform(0.8, 1.2))
-
-        print(f"  Closing bags (pressing 'i')...")
-        press("i")
-        time.sleep(random.uniform(0.5, 0.8))
 
         self._last_bauble_time = time.time()
         print(f"  Bauble applied. Next in {self.bauble_interval / 60:.0f}min.")
