@@ -301,10 +301,11 @@ def main() -> None:
     if args.setup is not None:
         image = args.setup if args.setup else None
         run_setup(image, args.config)
-        return
+        print("\nSetup complete. Starting bot...\n")
 
     if not os.path.isdir(args.template_dir):
-        parser.error(f"Template directory not found: {args.template_dir}")
+        os.makedirs(args.template_dir, exist_ok=True)
+        print(f"Created template directory: {args.template_dir}")
 
     # Load config file
     roi = None
