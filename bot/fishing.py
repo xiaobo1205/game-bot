@@ -47,9 +47,8 @@ class FishingBot:
     """Sound-triggered fishing bot with visual bobber location and auto-loop.
 
     Flow (auto-loop after F6):
-        1. F6 pressed → first cycle: locate bobber → listen → catch → loot
-        2. Subsequent cycles: press 'o' to cast → wait → locate → listen → catch → loot
-        3. Loops endlessly until F7 is pressed
+        1. F6 pressed → cast ('o') → wait → locate bobber → listen → catch → loot
+        2. Loops endlessly until F7 is pressed
 
     States:
         IDLE      — waiting for F6 activation
@@ -164,14 +163,13 @@ class FishingBot:
             print(f"  CYCLE #{cycle}")
             print(f"{'='*40}")
 
-            if cycle > 1:
-                # Re-cast: press the fishing key
-                print(f"  Casting (pressing '{self.cast_key}')...")
-                press(self.cast_key)
-                # Wait for cast animation + bobber to land
-                delay = self.cast_delay + random.uniform(-0.3, 0.5)
-                print(f"  Waiting {delay:.1f}s for bobber to land...")
-                time.sleep(delay)
+            # Cast: press the fishing key
+            print(f"  Casting (pressing '{self.cast_key}')...")
+            press(self.cast_key)
+            # Wait for cast animation + bobber to land
+            delay = self.cast_delay + random.uniform(-0.3, 0.5)
+            print(f"  Waiting {delay:.1f}s for bobber to land...")
+            time.sleep(delay)
 
             if not self._looping:
                 break
