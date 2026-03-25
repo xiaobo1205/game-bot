@@ -198,7 +198,11 @@ class AudioMonitor:
             baseline = 0.001
 
         now = time.time()
-        if rms > baseline * self.threshold_multiplier:
+        # Require BOTH relative spike (vs baseline) AND absolute minimum RMS
+        # to avoid false triggers from mouse clicks / keyboard sounds when
+        # the ambient level is near-silence
+        min_abs_rms = 0.01
+        if rms > baseline * self.threshold_multiplier and rms > min_abs_rms:
             if now - self._last_trigger > self.cooldown:
                 self._last_trigger = now
                 if self._callback_fn:
