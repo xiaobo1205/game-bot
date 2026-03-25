@@ -132,8 +132,9 @@ class AudioMonitor:
     def enabled(self, value: bool) -> None:
         self._enabled = value
         if value:
-            # Reset baseline and cooldown when re-enabled
-            self._rms_history.clear()
+            # Reset cooldown but keep baseline history — clearing it causes
+            # false triggers because the new baseline is built from too few
+            # near-silence samples
             self._last_trigger = 0.0
 
     def on_trigger(self, callback) -> None:
@@ -189,7 +190,7 @@ class AudioMonitor:
         if not self._enabled:
             return
 
-        if len(self._rms_history) < 20:
+        if len(self._rms_history) < 60:
             return
 
         baseline = float(np.median(list(self._rms_history)))
