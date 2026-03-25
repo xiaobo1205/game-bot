@@ -315,8 +315,13 @@ class FishingBot:
         self.catch_count += 1
         print(f"[#{self.catch_count}] Catching!")
 
-        # Right-click the bobber (mouse already positioned there)
+        # Brief human reaction delay after hearing the splash
         self.state = State.CATCHING
+        reaction_delay = random.uniform(0.3, 0.7)
+        print(f"  Reaction delay: {reaction_delay:.2f}s")
+        time.sleep(reaction_delay)
+
+        # Right-click the bobber (mouse already positioned there)
         click(x, y, button="right")
         print("  Right-clicked bobber — looting...")
 
