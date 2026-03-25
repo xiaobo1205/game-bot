@@ -70,6 +70,7 @@ class AudioMonitor:
         device: int | None = None,
         block_duration: float = 0.05,
         baseline_window: int = 100,
+        debug: bool = False,
     ):
         """
         Args:
@@ -95,6 +96,8 @@ class AudioMonitor:
         self._last_trigger = 0.0
         self._rms_history = deque(maxlen=baseline_window)
         self._enabled = False
+        self._debug = debug
+        self._debug_counter = 0
 
     @property
     def enabled(self) -> bool:
@@ -143,10 +146,20 @@ class AudioMonitor:
     def _audio_callback(self, indata, frames, time_info, status) -> None:
         """Called by sounddevice for each audio block (runs in audio thread)."""
         if status:
+            if self._debug:
+                print(f"  [AUDIO] Stream status: {status}")
             return
 
         rms = self._compute_rms(indata)
         self._rms_history.append(rms)
+
+        # Periodic debug: print RMS every ~2 seconds (every 40 blocks at 50ms each)
+        self._debug_counter += 1
+        if self._debug and self._debug_counter % 40 == 0:
+            baseline = float(np.median(list(self._rms_history))) if len(self._rms_history) >= 5 else 0.0
+            ratio = rms / baseline if baseline > 1e-6 else 0.0
+            print(f"  [AUDIO] rms={rms:.6f} baseline={baseline:.6f} ratio={ratio:.1f}x "
+                  f"enabled={self._enabled} samples={len(self._rms_history)}")
 
         if not self._enabled:
             return

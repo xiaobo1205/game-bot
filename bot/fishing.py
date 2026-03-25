@@ -99,6 +99,7 @@ class FishingBot:
             threshold_multiplier=volume_multiplier,
             cooldown=cooldown,
             device=audio_device,
+            debug=debug,
         )
         self.audio.on_trigger(self._on_splash)
 
