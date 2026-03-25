@@ -207,31 +207,54 @@ class FishingBot:
             print(f"  Loaded template: {Path(latest).name} ({w}x{h}px)")
         return True
 
+    def _locate_bobber(self) -> tuple[int, int] | None:
+        """Try to locate bobber on screen, retrying up to 3 times."""
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            if not self._looping:
+                return None
+
+            if attempt > 1:
+                print(f"  Retry {attempt}/{max_retries} — waiting 1s...")
+                time.sleep(1.0)
+
+            frame = self.screen.grab()
+            matches = find_template(frame, self.template, self.threshold, debug=self.debug)
+
+            if matches:
+                return matches[0]
+
+            print(f"  Attempt {attempt}/{max_retries}: bobber not found.")
+
+        print("  WARNING: Could not locate bobber after 3 attempts.")
+        return None
+
     def _run_cycle(self) -> None:
-        """One full fishing cycle: locate bobber → listen for splash → catch."""
+        """One full fishing cycle: locate bobber → move mouse → listen for splash → catch."""
         # Step 0: Load latest template
         self.state = State.LOCATING
         if not self._load_latest_template():
             self.state = State.IDLE
             return
 
-        # Step 1: Wait, then locate bobber
-        print(f"Bot ACTIVE - locating bobber in {self.locate_delay}s...")
+        # Step 1: Wait, then locate bobber (with retries)
+        print(f"  Locating bobber in {self.locate_delay}s...")
         time.sleep(self.locate_delay)
 
-        frame = self.screen.grab()
-        matches = find_template(frame, self.template, self.threshold, debug=self.debug)
-
-        if not matches:
-            print("  WARNING: Could not locate bobber on screen. Press F6 to retry.")
+        pos = self._locate_bobber()
+        if pos is None:
             self.state = State.IDLE
             return
 
-        self._bobber_pos = matches[0]
+        self._bobber_pos = pos
         x, y = self._bobber_pos
         print(f"  Bobber found at ({x}, {y})")
 
-        # Step 2: Enable audio and listen for splash
+        # Step 2: Move mouse to bobber immediately
+        print(f"  Moving mouse to bobber...")
+        move_human(x, y)
+
+        # Step 3: Enable audio and listen for splash
         self.state = State.LISTENING
         self.audio.enabled = True
         listen_start = time.time()
@@ -255,7 +278,7 @@ class FishingBot:
                     return  # back to _loop() for next cycle
 
     def _handle_catch(self) -> None:
-        """Catch sequence: move to cached bobber position → click → loot."""
+        """Catch sequence: right-click bobber (mouse is already there) → wait for loot."""
         if self._bobber_pos is None:
             print("  WARNING: No bobber position cached. Skipping.")
             self.state = State.IDLE
@@ -263,29 +286,18 @@ class FishingBot:
 
         x, y = self._bobber_pos
         self.catch_count += 1
-        print(f"[#{self.catch_count}] Moving to bobber at ({x}, {y})")
+        print(f"[#{self.catch_count}] Catching!")
 
-        # Move mouse to bobber with human-like path
+        # Right-click the bobber (mouse already positioned there)
         self.state = State.CATCHING
-        move_human(x, y)
-
-        # Small pause before clicking
-        time.sleep(random.uniform(0.1, 0.3))
-
-        # Right-click the bobber
         click(x, y, button="right")
-        print("  Right-clicked bobber")
+        print("  Right-clicked bobber — looting...")
 
-        # Wait for loot window
+        # Wait for loot to complete
         self.state = State.LOOTING
-        time.sleep(random.uniform(0.8, 1.5))
-
-        # Press loot key
-        press(self.loot_key)
-        print(f"  Pressed '{self.loot_key}' to loot")
+        time.sleep(1.0)
 
         # Done — disable audio until next cycle re-enables it
-        time.sleep(random.uniform(0.3, 0.6))
         self.audio.enabled = False
         self._bobber_pos = None
         self.state = State.IDLE
