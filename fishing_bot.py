@@ -288,6 +288,8 @@ def main() -> None:
                              "Optional: path to screenshot (default: latest in screenshots/)")
     parser.add_argument("--bauble-interval", type=float, default=10.0,
                         help="Minutes between bauble applications (default: 10.0, 0 to disable)")
+    parser.add_argument("--max-sessions", type=int, default=3,
+                        help="Number of bauble sessions before auto-stop (default: 3)")
     parser.add_argument("--debug", action="store_true",
                         help="Save debug screenshots showing match results")
     parser.add_argument("--list-devices", action="store_true",
@@ -339,6 +341,7 @@ def main() -> None:
         roi=roi,
         pole_pos=pole_pos,
         bauble_interval=args.bauble_interval * 60,  # convert min to sec
+        max_sessions=args.max_sessions,
     )
     bot.run()
 

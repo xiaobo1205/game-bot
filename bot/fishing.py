@@ -75,12 +75,14 @@ class FishingBot:
         roi: dict | None = None,
         pole_pos: dict | None = None,
         bauble_interval: float = 600.0,
+        max_sessions: int = 3,
     ):
         # Vision: template directory for bobber location
         self.debug = debug
         self.roi = roi  # {"top": N, "left": N, "width": N, "height": N} or None
         self.pole_pos = pole_pos  # {"x": N, "y": N} or None
         self.bauble_interval = bauble_interval  # seconds, 0 = disabled
+        self.max_sessions = max_sessions  # stop after this many bauble applications
         self.template_dir = template_dir
         if not Path(template_dir).is_dir():
             raise FileNotFoundError(f"Template directory not found: {template_dir}")
@@ -117,6 +119,7 @@ class FishingBot:
         self._activate_event = threading.Event()
         self._bobber_pos: tuple[int, int] | None = None
         self._last_bauble_time: float = 0.0  # epoch when baubles were last applied
+        self._bauble_count: int = 0  # number of baubles applied so far
 
     def _activate(self) -> None:
         self._activate_event.set()
@@ -149,8 +152,9 @@ class FishingBot:
         else:
             print("ROI: full screen (run --setup to set one)")
         if self.pole_pos and self.bauble_interval > 0:
-            print(f"Bauble: every {self.bauble_interval / 60:.0f}min → "
-                  f"pole at ({self.pole_pos['x']}, {self.pole_pos['y']})")
+            total_min = self.max_sessions * self.bauble_interval / 60
+            print(f"Bauble: every {self.bauble_interval / 60:.0f}min × {self.max_sessions} sessions "
+                  f"({total_min:.0f}min total) → pole at ({self.pole_pos['x']}, {self.pole_pos['y']})")
         elif not self.pole_pos:
             print("Bauble: disabled (no pole position — run --setup)")
         else:
@@ -179,6 +183,8 @@ class FishingBot:
         """Check if it's time to apply a bauble."""
         if not self.pole_pos or self.bauble_interval <= 0:
             return False
+        if self._bauble_count >= self.max_sessions:
+            return False  # all sessions used
         if self._last_bauble_time == 0.0:
             return False  # skip first run, start the timer
         return (time.time() - self._last_bauble_time) >= self.bauble_interval
@@ -203,7 +209,10 @@ class FishingBot:
         time.sleep(random.uniform(0.8, 1.2))
 
         self._last_bauble_time = time.time()
-        print(f"  Bauble applied. Next in {self.bauble_interval / 60:.0f}min.")
+        self._bauble_count += 1
+        remaining = self.max_sessions - self._bauble_count
+        print(f"  Bauble applied ({self._bauble_count}/{self.max_sessions}). "
+              f"{'Next in ' + str(int(self.bauble_interval / 60)) + 'min.' if remaining > 0 else 'Final session.'}")
 
     def _loop(self) -> None:
         """Auto-loop: cast → locate → listen → catch → loot → repeat until F7."""
@@ -216,6 +225,15 @@ class FishingBot:
             print(f"\n{'='*40}")
             print(f"  CYCLE #{cycle}")
             print(f"{'='*40}")
+
+            # Check if all sessions are done (last bauble interval expired)
+            if (self._bauble_count >= self.max_sessions
+                    and self.bauble_interval > 0
+                    and self._last_bauble_time > 0
+                    and (time.time() - self._last_bauble_time) >= self.bauble_interval):
+                print(f"\n  All {self.max_sessions} sessions complete. Stopping bot.")
+                self._looping = False
+                break
 
             # Check if bauble needs to be applied
             if self._needs_bauble():
