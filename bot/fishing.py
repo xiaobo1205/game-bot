@@ -1,4 +1,4 @@
-"""WoW fishing bot: detect bobber splash via template matching, then loot."""
+"""WoW fishing bot: detect bobber splash via color-based HSV matching, then loot."""
 
 import random
 import time
@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 from bot.loop import GameBot
-from bot.vision import find_template
+from bot.vision import extract_hsv_range, find_color_regions
 from bot.input import move_human, click, press
 
 
@@ -20,10 +20,14 @@ class State(Enum):
 
 
 class FishingBot(GameBot):
-    """Watches for a bobber splash, moves mouse to it, right-clicks, and loots.
+    """Watches for a bobber splash using color detection, then right-clicks and loots.
+
+    Uses the template image to auto-calibrate an HSV color range, then scans
+    each frame for matching color regions. More robust than pixel-exact template
+    matching — tolerates resolution, lighting, and UI scale differences.
 
     States:
-        WATCHING  — scanning each frame for template match
+        WATCHING  — scanning each frame for color match
         CATCHING  — matched! moving mouse + right-clicking
         LOOTING   — pressing loot key after a pause
         COOLDOWN  — brief pause before resuming watch
@@ -32,7 +36,7 @@ class FishingBot(GameBot):
     def __init__(
         self,
         template_path: str,
-        threshold: float = 0.75,
+        min_area: int = 200,
         tick_rate: float = 1.0,
         loot_key: str = "1",
         monitor: int = 1,
@@ -40,32 +44,33 @@ class FishingBot(GameBot):
         stop_key: str = "f7",
     ):
         super().__init__(tick_rate=tick_rate, monitor=monitor, start_key=start_key, stop_key=stop_key)
-        self.template = cv2.imread(template_path)
-        if self.template is None:
+        template = cv2.imread(template_path)
+        if template is None:
             raise FileNotFoundError(f"Could not load template image: {template_path}")
-        self.threshold = threshold
+        self.lower_hsv, self.upper_hsv = extract_hsv_range(template)
+        self.min_area = min_area
         self.loot_key = loot_key
         self.state = State.WATCHING
         self.catch_count = 0
 
     def on_start(self) -> None:
-        h, w = self.template.shape[:2]
-        print(f"Template loaded ({w}x{h}px), threshold={self.threshold}")
-        print(f"Loot key: {self.loot_key}")
+        print(f"HSV range: {self.lower_hsv} → {self.upper_hsv}")
+        print(f"Min area: {self.min_area}px, Loot key: {self.loot_key}")
         print(f"Scan interval: {self.tick_rate}s")
 
     def on_frame(self, frame: np.ndarray) -> None:
         if self.state != State.WATCHING:
             return
 
-        matches = find_template(frame, self.template, self.threshold)
-        if not matches:
+        regions = find_color_regions(frame, self.lower_hsv, self.upper_hsv, min_area=self.min_area)
+        if not regions:
             return
 
-        # Take the first (best) match
-        x, y = matches[0]
+        # Pick the largest matching region (most likely the bobber splash)
+        biggest = max(regions, key=lambda r: r["area"])
+        x, y = biggest["x"], biggest["y"]
         self.catch_count += 1
-        print(f"[#{self.catch_count}] Bobber detected at ({x}, {y}) — catching!")
+        print(f"[#{self.catch_count}] Bobber detected at ({x}, {y}), area={biggest['area']} — catching!")
 
         self.state = State.CATCHING
         self._catch(x, y)
