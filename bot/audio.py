@@ -140,63 +140,58 @@ class AudioMonitor:
         """Compute root mean square of audio data."""
         return float(np.sqrt(np.mean(audio_data.astype(np.float64) ** 2)))
 
-    def _open_stream(self, dev_info: dict, sample_rate: int, block_size: int):
-        """Open an audio input stream. Device must have input channels (e.g., Stereo Mix)."""
-        channels = dev_info.get("max_input_channels", 0)
+    def _audio_callback(self, indata, frames, time_info, status) -> None:
+        """Called by sounddevice for each audio block (runs in audio thread)."""
+        if status:
+            return
 
-        if channels == 0:
-            raise ValueError(
-                f"Device '{dev_info['name']}' is output-only and cannot capture audio. "
-                f"Use an input device like Stereo Mix instead. "
-                f"Run with --list-devices to find one."
-            )
+        rms = self._compute_rms(indata)
+        self._rms_history.append(rms)
 
-        print(f"  Opening input stream (channels={channels})")
-        return sd.InputStream(
-            device=self.device,
-            samplerate=sample_rate,
-            channels=channels,
-            blocksize=block_size,
-            dtype="float32",
-        )
+        if not self._enabled:
+            return
+
+        # Need enough samples for a baseline
+        if len(self._rms_history) < 20:
+            return
+
+        baseline = float(np.median(list(self._rms_history)))
+        if baseline < 1e-6:
+            baseline = 0.001
+
+        now = time.time()
+        if rms > baseline * self.threshold_multiplier:
+            if now - self._last_trigger > self.cooldown:
+                self._last_trigger = now
+                if self._callback:
+                    self._callback(rms, baseline)
 
     def _monitor_loop(self) -> None:
-        """Background thread: read audio chunks and check for spikes."""
+        """Background thread: open callback-based audio stream and keep it alive."""
         dev_info = sd.query_devices(self.device)
         sample_rate = int(dev_info["default_samplerate"])
+        channels = dev_info.get("max_input_channels", 0)
         block_size = int(sample_rate * self.block_duration)
 
+        if channels == 0:
+            print(f"  ERROR: Device '{dev_info['name']}' is output-only. "
+                  f"Use an input device like Stereo Mix. Run --list-devices.")
+            self._running = False
+            return
+
         try:
-            stream = self._open_stream(dev_info, sample_rate, block_size)
-            with stream:
+            with sd.InputStream(
+                device=self.device,
+                samplerate=sample_rate,
+                channels=channels,
+                blocksize=block_size,
+                dtype="float32",
+                callback=self._audio_callback,
+            ):
                 print(f"  Audio stream opened successfully on device {self.device}")
+                # Keep thread alive while stream runs via callback
                 while self._running:
-                    data, overflowed = stream.read(block_size)
-                    if overflowed:
-                        continue
-
-                    rms = self._compute_rms(data)
-                    self._rms_history.append(rms)
-
-                    if not self._enabled:
-                        continue
-
-                    # Need enough samples for a baseline
-                    if len(self._rms_history) < 20:
-                        continue
-
-                    baseline = float(np.median(list(self._rms_history)))
-                    if baseline < 1e-6:
-                        # Near-silence, use absolute threshold
-                        baseline = 0.001
-
-                    # Check for spike
-                    now = time.time()
-                    if rms > baseline * self.threshold_multiplier:
-                        if now - self._last_trigger > self.cooldown:
-                            self._last_trigger = now
-                            if self._callback:
-                                self._callback(rms, baseline)
+                    time.sleep(0.1)
 
         except Exception as e:
             print(f"Audio monitor error: {e}")
