@@ -1,26 +1,71 @@
-"""CLI entry point for the WoW fishing bot."""
+"""CLI entry point for the WoW fishing bot (sound-triggered + visual bobber location)."""
 
 import argparse
+import sounddevice as sd
+
 from bot.fishing import FishingBot
 
 
+def list_devices() -> None:
+    """Print all available audio devices."""
+    print("Available audio devices:")
+    print("-" * 70)
+    for i, dev in enumerate(sd.query_devices()):
+        direction = ""
+        if dev["max_input_channels"] > 0:
+            direction += "IN"
+        if dev["max_output_channels"] > 0:
+            direction += "/OUT" if direction else "OUT"
+        print(f"  [{i:2d}] {dev['name']:<50s} {direction}")
+    print("-" * 70)
+
+    # Show host APIs
+    print("\nHost APIs:")
+    for i, api in enumerate(sd.query_hostapis()):
+        default = " (default)" if i == sd.default.hostapi else ""
+        print(f"  [{i}] {api['name']}{default}")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="WoW Fishing Bot — color-based bobber detector")
-    parser.add_argument("--template", required=True, help="Path to bobber splash template image (PNG/JPG)")
-    parser.add_argument("--min-area", type=int, default=200, help="Minimum pixel area for color match (default: 200)")
-    parser.add_argument("--tick-rate", type=float, default=1.0, help="Seconds between scans (default: 1.0)")
-    parser.add_argument("--loot-key", default="1", help="Key to press after catching (default: '1')")
-    parser.add_argument("--monitor", type=int, default=1, help="Monitor index (default: 1 = primary)")
-    parser.add_argument("--start-key", default="f6", help="Hotkey to activate bot (default: F6)")
-    parser.add_argument("--stop-key", default="f7", help="Hotkey to pause bot (default: F7)")
+    parser = argparse.ArgumentParser(
+        description="WoW Fishing Bot — sound-triggered with visual bobber detection"
+    )
+    parser.add_argument("--template", help="Path to bobber template image (PNG/JPG)")
+    parser.add_argument("--threshold", type=float, default=0.7,
+                        help="Template match confidence 0-1 (default: 0.7)")
+    parser.add_argument("--volume-multiplier", type=float, default=3.0,
+                        help="Volume spike threshold as multiplier of ambient (default: 3.0)")
+    parser.add_argument("--cooldown", type=float, default=3.0,
+                        help="Seconds between catch attempts (default: 3.0)")
+    parser.add_argument("--loot-key", default="1",
+                        help="Key to press after catching (default: '1')")
+    parser.add_argument("--monitor", type=int, default=1,
+                        help="Monitor index (default: 1 = primary)")
+    parser.add_argument("--device", type=int, default=None,
+                        help="Audio device index (default: auto-detect loopback)")
+    parser.add_argument("--start-key", default="f6",
+                        help="Hotkey to activate bot (default: F6)")
+    parser.add_argument("--stop-key", default="f7",
+                        help="Hotkey to pause bot (default: F7)")
+    parser.add_argument("--list-devices", action="store_true",
+                        help="List available audio devices and exit")
     args = parser.parse_args()
+
+    if args.list_devices:
+        list_devices()
+        return
+
+    if not args.template:
+        parser.error("--template is required (path to bobber image for visual location)")
 
     bot = FishingBot(
         template_path=args.template,
-        min_area=args.min_area,
-        tick_rate=args.tick_rate,
+        threshold=args.threshold,
+        volume_multiplier=args.volume_multiplier,
+        cooldown=args.cooldown,
         loot_key=args.loot_key,
         monitor=args.monitor,
+        audio_device=args.device,
         start_key=args.start_key,
         stop_key=args.stop_key,
     )
