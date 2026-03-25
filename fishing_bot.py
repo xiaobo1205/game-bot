@@ -30,7 +30,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="WoW Fishing Bot — sound-triggered with visual bobber detection"
     )
-    parser.add_argument("--template", help="Path to bobber template image (PNG/JPG)")
+    parser.add_argument("--template-dir", default="templates",
+                        help="Directory containing bobber template images (default: templates/)")
     parser.add_argument("--threshold", type=float, default=0.7,
                         help="Template match confidence 0-1 (default: 0.7)")
     parser.add_argument("--volume-multiplier", type=float, default=3.0,
@@ -57,11 +58,12 @@ def main() -> None:
         list_devices()
         return
 
-    if not args.template:
-        parser.error("--template is required (path to bobber image for visual location)")
+    import os
+    if not os.path.isdir(args.template_dir):
+        parser.error(f"Template directory not found: {args.template_dir}")
 
     bot = FishingBot(
-        template_path=args.template,
+        template_dir=args.template_dir,
         threshold=args.threshold,
         volume_multiplier=args.volume_multiplier,
         cooldown=args.cooldown,

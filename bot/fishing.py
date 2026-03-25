@@ -4,10 +4,12 @@ Sound detects the splash moment. Template matching locates the bobber on screen
 shortly after activation (not after the splash), and caches the position.
 """
 
+import os
 import random
 import time
 import threading
 from enum import Enum
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -17,6 +19,20 @@ from bot.audio import AudioMonitor
 from bot.hotkeys import HotkeyListener
 from bot.vision import find_template
 from bot.input import move_human, click, press
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp"}
+
+
+def find_latest_template(template_dir: str) -> str | None:
+    """Find the most recently modified image file in a directory."""
+    path = Path(template_dir)
+    if not path.is_dir():
+        return None
+    images = [f for f in path.iterdir() if f.suffix.lower() in IMAGE_EXTENSIONS]
+    if not images:
+        return None
+    latest = max(images, key=lambda f: f.stat().st_mtime)
+    return str(latest)
 
 
 class State(Enum):
@@ -46,7 +62,7 @@ class FishingBot:
 
     def __init__(
         self,
-        template_path: str,
+        template_dir: str,
         threshold: float = 0.7,
         volume_multiplier: float = 3.0,
         cooldown: float = 3.0,
@@ -57,10 +73,12 @@ class FishingBot:
         stop_key: str = "f7",
         locate_delay: float = 1.0,
     ):
-        # Vision: template for bobber location
-        self.template = cv2.imread(template_path)
-        if self.template is None:
-            raise FileNotFoundError(f"Could not load template image: {template_path}")
+        # Vision: template directory for bobber location
+        self.template_dir = template_dir
+        if not Path(template_dir).is_dir():
+            raise FileNotFoundError(f"Template directory not found: {template_dir}")
+        self.template = None
+        self._template_path = None
         self.threshold = threshold
         self.locate_delay = locate_delay
 
@@ -110,8 +128,8 @@ class FishingBot:
         self.hotkeys.register()
         self.audio.start()
 
-        h, w = self.template.shape[:2]
-        print(f"Template loaded ({w}x{h}px), match threshold={self.threshold}")
+        print(f"Template dir: {self.template_dir} (loads latest on each cycle)")
+        print(f"Match threshold: {self.threshold}")
         print(f"Loot key: {self.loot_key}")
         print(f"Locate delay: {self.locate_delay}s after activation")
         print(f"Press {self.hotkeys.start_key.upper()} to start, "
@@ -133,10 +151,31 @@ class FishingBot:
     def stop(self) -> None:
         self._running = False
 
+    def _load_latest_template(self) -> bool:
+        """Load the most recently modified template from the template directory."""
+        latest = find_latest_template(self.template_dir)
+        if latest is None:
+            print(f"  WARNING: No image files found in {self.template_dir}")
+            return False
+        if latest != self._template_path:
+            self.template = cv2.imread(latest)
+            if self.template is None:
+                print(f"  WARNING: Could not read image: {latest}")
+                return False
+            self._template_path = latest
+            h, w = self.template.shape[:2]
+            print(f"  Loaded template: {Path(latest).name} ({w}x{h}px)")
+        return True
+
     def _run_cycle(self) -> None:
         """One full fishing cycle: locate bobber → listen for splash → catch."""
-        # Step 1: Wait, then locate bobber
+        # Step 0: Load latest template
         self.state = State.LOCATING
+        if not self._load_latest_template():
+            self.state = State.IDLE
+            return
+
+        # Step 1: Wait, then locate bobber
         print(f"Bot ACTIVE - locating bobber in {self.locate_delay}s...")
         time.sleep(self.locate_delay)
 
