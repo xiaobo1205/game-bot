@@ -367,12 +367,18 @@ class FishingBot:
         print(f"  Moving mouse to bobber...")
         move_human(x, y)
 
-        # Step 3: Enable audio and listen for splash
+        # Step 3: Warmup — let cast/mouse sounds fade before listening
+        warmup = 3.0
+        print(f"  Warming up audio baseline ({warmup}s)...")
+        self.audio.enabled = True  # start collecting samples but won't trigger (need 60+)
+        self._rms_at_enable = time.time()
+        time.sleep(warmup)
+
+        # Now clear any splash events and start listening
         self.state = State.LISTENING
-        self._splash_event.clear()  # reset from any previous cycle/pause
-        self.audio.enabled = True
+        self._splash_event.clear()
         listen_start = time.time()
-        listen_timeout = 30.0  # WoW bobber despawns after ~30s
+        listen_timeout = 27.0  # ~30s bobber lifetime minus warmup
         print(f"  Listening for splash (timeout {listen_timeout}s)...")
 
         # Wait for splash, F7, or timeout
