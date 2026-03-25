@@ -144,9 +144,13 @@ def _select_point(display, scale, title, instructions):
 
 
 def run_setup(image_path: str | None, config_path: str) -> None:
-    """Two-step interactive setup: select bobber ROI, then fishing pole position.
+    """Three-step interactive setup on a single screenshot.
 
-    Both selections use the same screenshot. Results saved to config.json.
+    1. Select bobber search area (ROI rectangle)
+    2. Select bobber template (rectangle → cropped and saved to templates/)
+    3. Click fishing pole position (point)
+
+    Results saved to config.json and templates/.
     """
     _, frame = _load_screenshot(image_path)
     if frame is None:
@@ -166,14 +170,39 @@ def run_setup(image_path: str | None, config_path: str) -> None:
         "  - Enter to confirm, Esc to skip, R to reset"
     )
 
-    # Step 2: Select fishing pole position
+    # Step 2: Select bobber template (crop from full-res screenshot)
     print("\n" + "=" * 50)
-    print("  STEP 2: Click on FISHING POLE in bags")
+    print("  STEP 2: Select BOBBER TEMPLATE")
+    print("=" * 50)
+    bobber_rect = _select_rectangle(
+        display, scale,
+        "Step 2: Draw tight box around the bobber - Enter to confirm, Esc to skip",
+        "Draw a tight rectangle around the bobber itself.\n"
+        "  - Crop as close to the bobber as possible\n"
+        "  - Enter to confirm, Esc to skip, R to reset"
+    )
+    if bobber_rect:
+        # Crop from full-res frame and save to templates/
+        t = bobber_rect["top"]
+        l = bobber_rect["left"]
+        w = bobber_rect["width"]
+        h = bobber_rect["height"]
+        bobber_crop = frame[t:t + h, l:l + w]
+
+        templates_dir = Path("templates")
+        templates_dir.mkdir(exist_ok=True)
+        template_path = templates_dir / "bobber.png"
+        cv2.imwrite(str(template_path), bobber_crop)
+        print(f"Bobber template saved: {template_path} ({w}x{h}px)")
+
+    # Step 3: Select fishing pole position
+    print("\n" + "=" * 50)
+    print("  STEP 3: Click on FISHING POLE on screen")
     print("=" * 50)
     pole_pos = _select_point(
         display, scale,
-        "Step 2: Click on fishing pole - Enter to confirm, Esc to skip",
-        "Click on the fishing pole in your inventory/bags.\n"
+        "Step 3: Click on fishing pole - Enter to confirm, Esc to skip",
+        "Click on the fishing pole on your character/screen.\n"
         "  - Left-click to select\n"
         "  - Enter to confirm, Esc to skip, R to reset"
     )
