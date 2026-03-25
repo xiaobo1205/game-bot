@@ -13,15 +13,22 @@ from bot.fishing import FishingBot
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp"}
 
 
+SCREENSHOT_DIRS = [
+    Path(r"C:\Users\xiaob\OneDrive\Pictures\Screenshots"),
+    Path("screenshots"),
+]
+
+
 def _load_screenshot(image_path: str | None) -> tuple[str | None, any]:
-    """Load a screenshot from path or auto-detect from screenshots/ folder."""
+    """Load a screenshot from path or auto-detect from known folders."""
     if not image_path:
-        screenshots_dir = Path("screenshots")
-        if screenshots_dir.is_dir():
-            images = [f for f in screenshots_dir.iterdir() if f.suffix.lower() in IMAGE_EXTENSIONS]
-            if images:
-                image_path = str(max(images, key=lambda f: f.stat().st_mtime))
-                print(f"Auto-detected latest screenshot: {image_path}")
+        for screenshots_dir in SCREENSHOT_DIRS:
+            if screenshots_dir.is_dir():
+                images = [f for f in screenshots_dir.iterdir() if f.suffix.lower() in IMAGE_EXTENSIONS]
+                if images:
+                    image_path = str(max(images, key=lambda f: f.stat().st_mtime))
+                    print(f"Auto-detected latest screenshot: {image_path}")
+                    break
 
     if not image_path:
         print("Error: No screenshot found. Save a screenshot to screenshots/ first.")
