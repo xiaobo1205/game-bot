@@ -5,9 +5,126 @@ import json
 import os
 from pathlib import Path
 
+import cv2
 import sounddevice as sd
 
 from bot.fishing import FishingBot
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp"}
+
+
+def select_roi(image_path: str | None, config_path: str) -> dict | None:
+    """Open an interactive window to draw an ROI rectangle on a screenshot.
+
+    Args:
+        image_path: Path to screenshot file, or None to auto-detect from screenshots/.
+        config_path: Path to save the ROI config JSON.
+
+    Returns:
+        ROI dict or None if cancelled.
+    """
+    # Auto-detect latest screenshot if no path given
+    if not image_path:
+        screenshots_dir = Path("screenshots")
+        if screenshots_dir.is_dir():
+            images = [f for f in screenshots_dir.iterdir() if f.suffix.lower() in IMAGE_EXTENSIONS]
+            if images:
+                image_path = str(max(images, key=lambda f: f.stat().st_mtime))
+                print(f"Auto-detected latest screenshot: {image_path}")
+
+    if not image_path:
+        print("Error: No screenshot found. Save a screenshot to screenshots/ first.")
+        return None
+
+    frame = cv2.imread(image_path)
+    if frame is None:
+        print(f"Error: Could not load image: {image_path}")
+        return None
+    print(f"Loaded: {image_path}")
+
+    # Scale down for display if too large
+    h, w = frame.shape[:2]
+    max_display = 1600
+    scale = min(max_display / w, max_display / h, 1.0)
+    if scale < 1.0:
+        display = cv2.resize(frame, (int(w * scale), int(h * scale)))
+    else:
+        scale = 1.0
+        display = frame.copy()
+
+    state = {"drawing": False, "start": (0, 0), "end": (0, 0)}
+
+    def mouse_callback(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            state["drawing"] = True
+            state["start"] = (x, y)
+            state["end"] = (x, y)
+        elif event == cv2.EVENT_MOUSEMOVE and state["drawing"]:
+            state["end"] = (x, y)
+        elif event == cv2.EVENT_LBUTTONUP:
+            state["drawing"] = False
+            state["end"] = (x, y)
+
+    window_name = "Draw ROI - Enter to save, Esc to cancel, R to reset"
+    cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+    cv2.setMouseCallback(window_name, mouse_callback)
+
+    print("Draw a rectangle around the area where the bobber appears.")
+    print("  - Click and drag to draw")
+    print("  - Press Enter to save")
+    print("  - Press Escape to cancel")
+    print("  - Press R to reset")
+
+    roi = None
+    while True:
+        canvas = display.copy()
+
+        if state["start"] != state["end"]:
+            cv2.rectangle(canvas, state["start"], state["end"], (0, 255, 0), 2)
+            rx = abs(state["end"][0] - state["start"][0])
+            ry = abs(state["end"][1] - state["start"][1])
+            label = f"{int(rx / scale)}x{int(ry / scale)}px"
+            cv2.putText(canvas, label,
+                        (min(state["start"][0], state["end"][0]),
+                         min(state["start"][1], state["end"][1]) - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+        cv2.imshow(window_name, canvas)
+        key = cv2.waitKey(30) & 0xFF
+
+        if key == 27:
+            print("Cancelled.")
+            break
+        elif key == ord("r"):
+            state["start"] = (0, 0)
+            state["end"] = (0, 0)
+            print("Reset rectangle.")
+        elif key == 13:
+            if state["start"] == state["end"]:
+                print("No rectangle drawn. Draw one first.")
+                continue
+
+            x1 = int(min(state["start"][0], state["end"][0]) / scale)
+            y1 = int(min(state["start"][1], state["end"][1]) / scale)
+            x2 = int(max(state["start"][0], state["end"][0]) / scale)
+            y2 = int(max(state["start"][1], state["end"][1]) / scale)
+
+            roi = {"top": y1, "left": x1, "width": x2 - x1, "height": y2 - y1}
+
+            path = Path(config_path)
+            config = {}
+            if path.exists():
+                with open(path) as f:
+                    config = json.load(f)
+            config["roi"] = roi
+            with open(path, "w") as f:
+                json.dump(config, f, indent=2)
+
+            print(f"ROI saved to {config_path}: {roi}")
+            break
+
+    cv2.destroyAllWindows()
+    return roi
 
 
 def list_devices() -> None:
@@ -58,6 +175,8 @@ def main() -> None:
                         help="Seconds to wait before locating bobber after F6 (default: 1.0)")
     parser.add_argument("--config", default="config.json",
                         help="Config file with ROI settings (default: config.json)")
+    parser.add_argument("--select-roi", nargs="?", const="", default=None, metavar="IMAGE",
+                        help="Open ROI selector. Optional: path to screenshot (default: latest in screenshots/)")
     parser.add_argument("--debug", action="store_true",
                         help="Save debug screenshots showing match results")
     parser.add_argument("--list-devices", action="store_true",
@@ -66,6 +185,11 @@ def main() -> None:
 
     if args.list_devices:
         list_devices()
+        return
+
+    if args.select_roi is not None:
+        image = args.select_roi if args.select_roi else None
+        select_roi(image, args.config)
         return
 
     if not os.path.isdir(args.template_dir):
@@ -81,7 +205,7 @@ def main() -> None:
         if roi:
             print(f"Loaded ROI from {args.config}: {roi}")
     else:
-        print(f"No config file ({args.config}). Run select_roi.py to set ROI.")
+        print(f"No config file ({args.config}). Run --select-roi to set ROI.")
 
     bot = FishingBot(
         template_dir=args.template_dir,
