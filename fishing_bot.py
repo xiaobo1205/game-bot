@@ -254,8 +254,8 @@ def main() -> None:
     )
     parser.add_argument("--template-dir", default="templates",
                         help="Directory containing bobber template images (default: templates/)")
-    parser.add_argument("--threshold", type=float, default=0.7,
-                        help="Template match confidence 0-1 (default: 0.7)")
+    parser.add_argument("--threshold", type=float, default=0.6,
+                        help="Template match confidence 0-1 (default: 0.6)")
     parser.add_argument("--volume-multiplier", type=float, default=3.0,
                         help="Volume spike threshold as multiplier of ambient (default: 3.0)")
     parser.add_argument("--cooldown", type=float, default=3.0,

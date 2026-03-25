@@ -61,7 +61,7 @@ class FishingBot:
     def __init__(
         self,
         template_dir: str,
-        threshold: float = 0.7,
+        threshold: float = 0.6,
         volume_multiplier: float = 3.0,
         cooldown: float = 3.0,
         loot_key: str = "1",
@@ -334,8 +334,8 @@ class FishingBot:
 
         pos = self._locate_bobber()
         if pos is None:
-            # Stop loop — don't auto-cast again. User must press F6 to retry.
-            self._looping = False
+            # Bobber not found — skip this cycle, re-cast on next loop iteration
+            print("  Skipping cycle, will re-cast...")
             self.audio.enabled = False
             self.state = State.IDLE
             return
