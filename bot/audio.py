@@ -141,21 +141,50 @@ class AudioMonitor:
         """Compute root mean square of audio data."""
         return float(np.sqrt(np.mean(audio_data.astype(np.float64) ** 2)))
 
-    def _monitor_loop(self) -> None:
-        """Background thread: read audio chunks and check for spikes."""
-        dev_info = sd.query_devices(self.device)
-        sample_rate = int(dev_info["default_samplerate"])
+    def _open_stream(self, dev_info: dict, sample_rate: int, block_size: int):
+        """Try to open an audio stream, using WASAPI loopback for output devices."""
         channels = max(1, dev_info.get("max_input_channels", 1))
-        block_size = int(sample_rate * self.block_duration)
+        is_output_only = dev_info["max_input_channels"] == 0
 
-        try:
-            with sd.InputStream(
+        if is_output_only:
+            # Use WASAPI loopback to capture from an output device
+            channels = max(1, dev_info.get("max_output_channels", 2))
+            print(f"  Opening WASAPI loopback on output device (channels={channels})")
+            try:
+                import sounddevice as sd
+                extra_settings = sd.WasapiSettings(loopback=True)
+                return sd.InputStream(
+                    device=self.device,
+                    samplerate=sample_rate,
+                    channels=channels,
+                    blocksize=block_size,
+                    dtype="float32",
+                    extra_settings=extra_settings,
+                )
+            except Exception as e:
+                print(f"  WASAPI loopback failed: {e}")
+                raise
+        else:
+            # Normal input device (e.g., Stereo Mix)
+            print(f"  Opening input stream (channels={channels})")
+            return sd.InputStream(
                 device=self.device,
                 samplerate=sample_rate,
                 channels=channels,
                 blocksize=block_size,
                 dtype="float32",
-            ) as stream:
+            )
+
+    def _monitor_loop(self) -> None:
+        """Background thread: read audio chunks and check for spikes."""
+        dev_info = sd.query_devices(self.device)
+        sample_rate = int(dev_info["default_samplerate"])
+        block_size = int(sample_rate * self.block_duration)
+
+        try:
+            stream = self._open_stream(dev_info, sample_rate, block_size)
+            with stream:
+                print(f"  Audio stream opened successfully on device {self.device}")
                 while self._running:
                     data, overflowed = stream.read(block_size)
                     if overflowed:
@@ -186,4 +215,5 @@ class AudioMonitor:
 
         except Exception as e:
             print(f"Audio monitor error: {e}")
+            print("  Sound detection will not work. Check --device or --list-devices.")
             self._running = False

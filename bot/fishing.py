@@ -232,10 +232,20 @@ class FishingBot:
         # Step 2: Enable audio and listen for splash
         self.state = State.LISTENING
         self.audio.enabled = True
-        print("  Listening for splash...")
+        listen_start = time.time()
+        listen_timeout = 30.0  # WoW bobber despawns after ~30s
+        print(f"  Listening for splash (timeout {listen_timeout}s)...")
 
-        # Wait for splash (or F7 to deactivate)
+        # Wait for splash, F7, or timeout
         while self._running and self._looping and self.state == State.LISTENING:
+            elapsed = time.time() - listen_start
+            if elapsed >= listen_timeout:
+                print("  Bobber expired (no splash detected). Re-casting...")
+                self.audio.enabled = False
+                self._bobber_pos = None
+                self.state = State.IDLE
+                return  # back to _loop() for next cycle
+
             if self._splash_event.wait(timeout=0.1):
                 self._splash_event.clear()
                 if self.state == State.LISTENING and self._looping:
