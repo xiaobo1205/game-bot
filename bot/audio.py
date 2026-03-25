@@ -107,8 +107,9 @@ class AudioMonitor:
     def enabled(self, value: bool) -> None:
         self._enabled = value
         if value:
-            # Reset baseline when re-enabled
+            # Reset baseline and cooldown when re-enabled
             self._rms_history.clear()
+            self._last_trigger = 0.0
 
     def on_trigger(self, callback) -> None:
         """Set the callback to fire when a splash is detected.

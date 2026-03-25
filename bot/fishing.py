@@ -369,6 +369,7 @@ class FishingBot:
 
         # Step 3: Enable audio and listen for splash
         self.state = State.LISTENING
+        self._splash_event.clear()  # reset from any previous cycle/pause
         self.audio.enabled = True
         listen_start = time.time()
         listen_timeout = 30.0  # WoW bobber despawns after ~30s
