@@ -1,6 +1,7 @@
 """Interactive ROI selector — draw a rectangle on a screenshot to define the search area.
 
 Usage:
+    python select_roi.py screenshot.png [--config config.json]
     python select_roi.py [--monitor 1] [--config config.json]
 
 Controls:
@@ -16,8 +17,6 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-
-from bot.screen import ScreenCapture
 
 # Drawing state
 _drawing = False
@@ -42,13 +41,24 @@ def _mouse_callback(event, x, y, flags, param):
 
 def main():
     parser = argparse.ArgumentParser(description="Select ROI for bobber detection")
+    parser.add_argument("image", nargs="?", default=None,
+                        help="Path to a screenshot file (PNG/JPG). If omitted, captures screen live.")
     parser.add_argument("--monitor", type=int, default=1, help="Monitor index (default: 1)")
     parser.add_argument("--config", default="config.json", help="Config file to save ROI (default: config.json)")
     args = parser.parse_args()
 
-    # Capture screenshot
-    screen = ScreenCapture(monitor=args.monitor)
-    frame = screen.grab()
+    # Load from file or capture live
+    if args.image:
+        frame = cv2.imread(args.image)
+        if frame is None:
+            print(f"Error: Could not load image: {args.image}")
+            return
+        print(f"Loaded: {args.image}")
+    else:
+        from bot.screen import ScreenCapture
+        screen = ScreenCapture(monitor=args.monitor)
+        frame = screen.grab()
+        print("Captured live screenshot.")
 
     # Scale down for display if too large
     h, w = frame.shape[:2]
