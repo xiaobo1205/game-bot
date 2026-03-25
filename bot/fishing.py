@@ -44,13 +44,12 @@ class State(Enum):
 
 
 class FishingBot:
-    """Sound-triggered fishing bot with visual bobber location.
+    """Sound-triggered fishing bot with visual bobber location and auto-loop.
 
-    Flow:
-        1. F6 pressed → wait 1s → screenshot → find bobber → cache position
-        2. Audio monitor listens for splash sound (volume spike)
-        3. On splash → move mouse to cached bobber position → right-click → loot
-        4. Return to idle
+    Flow (auto-loop after F6):
+        1. F6 pressed → first cycle: locate bobber → listen → catch → loot
+        2. Subsequent cycles: press 'o' to cast → wait → locate → listen → catch → loot
+        3. Loops endlessly until F7 is pressed
 
     States:
         IDLE      — waiting for F6 activation
@@ -67,6 +66,7 @@ class FishingBot:
         volume_multiplier: float = 3.0,
         cooldown: float = 3.0,
         loot_key: str = "1",
+        cast_delay: float = 2.0,
         monitor: int = 1,
         audio_device: int | None = None,
         start_key: str = "f6",
@@ -100,9 +100,12 @@ class FishingBot:
 
         # State
         self.loot_key = loot_key
+        self.cast_key = "o"  # hardcoded fishing hotkey
+        self.cast_delay = cast_delay
         self.state = State.IDLE
         self.catch_count = 0
         self._running = False
+        self._looping = False
         self._splash_event = threading.Event()
         self._activate_event = threading.Event()
         self._bobber_pos: tuple[int, int] | None = None
@@ -111,10 +114,12 @@ class FishingBot:
         self._activate_event.set()
 
     def _deactivate(self) -> None:
+        self._looping = False
         self.audio.enabled = False
         self._bobber_pos = None
+        self._splash_event.set()  # unblock any waiting splash listener
         self.state = State.IDLE
-        print("Bot PAUSED")
+        print("Bot PAUSED (F7) — loop stopped")
 
     def _on_splash(self, rms: float, baseline: float) -> None:
         """Called by audio monitor when a volume spike is detected."""
@@ -130,8 +135,8 @@ class FishingBot:
 
         print(f"Template dir: {self.template_dir} (loads latest on each cycle)")
         print(f"Match threshold: {self.threshold}")
-        print(f"Loot key: {self.loot_key}")
-        print(f"Locate delay: {self.locate_delay}s after activation")
+        print(f"Cast key: '{self.cast_key}' | Loot key: '{self.loot_key}'")
+        print(f"Cast delay: {self.cast_delay}s | Locate delay: {self.locate_delay}s")
         print(f"Press {self.hotkeys.start_key.upper()} to start, "
               f"{self.hotkeys.stop_key.upper()} to stop, Ctrl+C to quit.")
 
@@ -140,13 +145,48 @@ class FishingBot:
                 # Wait for F6 activation
                 if self._activate_event.wait(timeout=0.1):
                     self._activate_event.clear()
-                    self._run_cycle()
+                    self._looping = True
+                    self._loop()
         except KeyboardInterrupt:
             print("\nBot quit.")
         finally:
             self._running = False
+            self._looping = False
             self.audio.stop()
             self.hotkeys.unregister()
+
+    def _loop(self) -> None:
+        """Auto-loop: cast → locate → listen → catch → loot → repeat until F7."""
+        cycle = 0
+        while self._running and self._looping:
+            cycle += 1
+            print(f"\n{'='*40}")
+            print(f"  CYCLE #{cycle}")
+            print(f"{'='*40}")
+
+            if cycle > 1:
+                # Re-cast: press the fishing key
+                print(f"  Casting (pressing '{self.cast_key}')...")
+                press(self.cast_key)
+                # Wait for cast animation + bobber to land
+                delay = self.cast_delay + random.uniform(-0.3, 0.5)
+                print(f"  Waiting {delay:.1f}s for bobber to land...")
+                time.sleep(delay)
+
+            if not self._looping:
+                break
+
+            self._run_cycle()
+
+            if not self._looping:
+                break
+
+            # Small pause between cycles
+            pause = random.uniform(0.5, 1.5)
+            print(f"  Pausing {pause:.1f}s before next cast...")
+            time.sleep(pause)
+
+        print(f"\nLoop ended after {cycle} cycle(s).")
 
     def stop(self) -> None:
         self._running = False
@@ -197,11 +237,12 @@ class FishingBot:
         print("  Listening for splash...")
 
         # Wait for splash (or F7 to deactivate)
-        while self._running and self.state == State.LISTENING:
+        while self._running and self._looping and self.state == State.LISTENING:
             if self._splash_event.wait(timeout=0.1):
                 self._splash_event.clear()
-                if self.state == State.LISTENING:
+                if self.state == State.LISTENING and self._looping:
                     self._handle_catch()
+                    return  # back to _loop() for next cycle
 
     def _handle_catch(self) -> None:
         """Catch sequence: move to cached bobber position → click → loot."""
@@ -233,9 +274,9 @@ class FishingBot:
         press(self.loot_key)
         print(f"  Pressed '{self.loot_key}' to loot")
 
-        # Done — back to idle (user presses F6 for next cast)
+        # Done — disable audio until next cycle re-enables it
         time.sleep(random.uniform(0.3, 0.6))
         self.audio.enabled = False
         self._bobber_pos = None
         self.state = State.IDLE
-        print("  Done. Press F6 after next cast.")
+        print("  Catch complete.")

@@ -38,6 +38,8 @@ def main() -> None:
                         help="Volume spike threshold as multiplier of ambient (default: 3.0)")
     parser.add_argument("--cooldown", type=float, default=3.0,
                         help="Seconds between catch attempts (default: 3.0)")
+    parser.add_argument("--cast-delay", type=float, default=2.0,
+                        help="Seconds to wait after casting for bobber to land (default: 2.0)")
     parser.add_argument("--loot-key", default="1",
                         help="Key to press after catching (default: '1')")
     parser.add_argument("--monitor", type=int, default=1,
@@ -68,6 +70,7 @@ def main() -> None:
         volume_multiplier=args.volume_multiplier,
         cooldown=args.cooldown,
         loot_key=args.loot_key,
+        cast_delay=args.cast_delay,
         monitor=args.monitor,
         audio_device=args.device,
         start_key=args.start_key,
