@@ -73,10 +73,14 @@ class FishingBot:
         locate_delay: float = 1.0,
         debug: bool = False,
         roi: dict | None = None,
+        pole_pos: dict | None = None,
+        bauble_interval: float = 600.0,
     ):
         # Vision: template directory for bobber location
         self.debug = debug
         self.roi = roi  # {"top": N, "left": N, "width": N, "height": N} or None
+        self.pole_pos = pole_pos  # {"x": N, "y": N} or None
+        self.bauble_interval = bauble_interval  # seconds, 0 = disabled
         self.template_dir = template_dir
         if not Path(template_dir).is_dir():
             raise FileNotFoundError(f"Template directory not found: {template_dir}")
@@ -112,6 +116,7 @@ class FishingBot:
         self._splash_event = threading.Event()
         self._activate_event = threading.Event()
         self._bobber_pos: tuple[int, int] | None = None
+        self._last_bauble_time: float = 0.0  # epoch when baubles were last applied
 
     def _activate(self) -> None:
         self._activate_event.set()
@@ -142,7 +147,14 @@ class FishingBot:
             r = self.roi
             print(f"ROI: ({r['left']}, {r['top']}) {r['width']}x{r['height']}px")
         else:
-            print("ROI: full screen (run select_roi.py to set one)")
+            print("ROI: full screen (run --setup to set one)")
+        if self.pole_pos and self.bauble_interval > 0:
+            print(f"Bauble: every {self.bauble_interval / 60:.0f}min → "
+                  f"pole at ({self.pole_pos['x']}, {self.pole_pos['y']})")
+        elif not self.pole_pos:
+            print("Bauble: disabled (no pole position — run --setup)")
+        else:
+            print("Bauble: disabled (interval=0)")
         print(f"Cast key: '{self.cast_key}' | Loot key: '{self.loot_key}'")
         print(f"Cast delay: {self.cast_delay}s | Locate delay: {self.locate_delay}s")
         print(f"Press {self.hotkeys.start_key.upper()} to start, "
@@ -163,6 +175,40 @@ class FishingBot:
             self.audio.stop()
             self.hotkeys.unregister()
 
+    def _needs_bauble(self) -> bool:
+        """Check if it's time to apply a bauble."""
+        if not self.pole_pos or self.bauble_interval <= 0:
+            return False
+        if self._last_bauble_time == 0.0:
+            return True  # first run, always apply
+        return (time.time() - self._last_bauble_time) >= self.bauble_interval
+
+    def _apply_bauble(self) -> None:
+        """Apply bauble to fishing pole: press 'i', click pole, close bags."""
+        if not self.pole_pos:
+            return
+
+        px, py = self.pole_pos["x"], self.pole_pos["y"]
+        print(f"\n  ** APPLYING BAUBLE **")
+        print(f"  Opening bags (pressing 'i')...")
+        press("i")
+        time.sleep(random.uniform(0.8, 1.2))
+
+        print(f"  Moving to fishing pole at ({px}, {py})...")
+        move_human(px, py)
+        time.sleep(random.uniform(0.2, 0.4))
+
+        print(f"  Left-clicking fishing pole...")
+        click(px, py, button="left")
+        time.sleep(random.uniform(0.8, 1.2))
+
+        print(f"  Closing bags (pressing 'i')...")
+        press("i")
+        time.sleep(random.uniform(0.5, 0.8))
+
+        self._last_bauble_time = time.time()
+        print(f"  Bauble applied. Next in {self.bauble_interval / 60:.0f}min.")
+
     def _loop(self) -> None:
         """Auto-loop: cast → locate → listen → catch → loot → repeat until F7."""
         cycle = 0
@@ -171,6 +217,12 @@ class FishingBot:
             print(f"\n{'='*40}")
             print(f"  CYCLE #{cycle}")
             print(f"{'='*40}")
+
+            # Check if bauble needs to be applied
+            if self._needs_bauble():
+                self._apply_bauble()
+                if not self._looping:
+                    break
 
             # Cast: press the fishing key
             print(f"  Casting (pressing '{self.cast_key}')...")
