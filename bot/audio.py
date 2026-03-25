@@ -25,32 +25,31 @@ def list_loopback_devices() -> list[dict]:
 
 
 def find_loopback_device() -> int | None:
-    """Auto-detect the best WASAPI loopback device index.
+    """Auto-detect the best audio input device for capturing system sound.
+
+    Prefers Stereo Mix (captures all system audio output as an input device).
+    Falls back to any input device.
 
     Returns the device index or None if not found.
     """
-    hostapis = sd.query_hostapis()
-    wasapi_index = None
-    for i, api in enumerate(hostapis):
-        if "wasapi" in api["name"].lower():
-            wasapi_index = i
-            break
-
-    if wasapi_index is None:
-        return None
-
-    # Find the default output device's loopback
     devices = sd.query_devices()
-    default_output = sd.default.device[1]
-    if default_output is not None and default_output >= 0:
-        dev = devices[default_output]
-        # WASAPI loopback uses the output device as input
-        if dev["hostapi"] == wasapi_index:
-            return default_output
 
-    # Fallback: find any WASAPI device with input channels
+    # Prefer "Stereo Mix" — it captures system audio as an input device
     for i, dev in enumerate(devices):
-        if dev["hostapi"] == wasapi_index and dev["max_input_channels"] > 0:
+        if "stereo mix" in dev["name"].lower() and dev["max_input_channels"] > 0:
+            print(f"  Auto-detected Stereo Mix: [{i}] {dev['name']}")
+            return i
+
+    # Fallback: any input device with "loopback" or "mix" in name
+    for i, dev in enumerate(devices):
+        name = dev["name"].lower()
+        if dev["max_input_channels"] > 0 and ("loopback" in name or "mix" in name):
+            print(f"  Auto-detected loopback device: [{i}] {dev['name']}")
+            return i
+
+    # Last resort: any input device
+    for i, dev in enumerate(devices):
+        if dev["max_input_channels"] > 0:
             return i
 
     return None
@@ -142,38 +141,24 @@ class AudioMonitor:
         return float(np.sqrt(np.mean(audio_data.astype(np.float64) ** 2)))
 
     def _open_stream(self, dev_info: dict, sample_rate: int, block_size: int):
-        """Try to open an audio stream, using WASAPI loopback for output devices."""
-        channels = max(1, dev_info.get("max_input_channels", 1))
-        is_output_only = dev_info["max_input_channels"] == 0
+        """Open an audio input stream. Device must have input channels (e.g., Stereo Mix)."""
+        channels = dev_info.get("max_input_channels", 0)
 
-        if is_output_only:
-            # Use WASAPI loopback to capture from an output device
-            channels = max(1, dev_info.get("max_output_channels", 2))
-            print(f"  Opening WASAPI loopback on output device (channels={channels})")
-            try:
-                import sounddevice as sd
-                extra_settings = sd.WasapiSettings(loopback=True)
-                return sd.InputStream(
-                    device=self.device,
-                    samplerate=sample_rate,
-                    channels=channels,
-                    blocksize=block_size,
-                    dtype="float32",
-                    extra_settings=extra_settings,
-                )
-            except Exception as e:
-                print(f"  WASAPI loopback failed: {e}")
-                raise
-        else:
-            # Normal input device (e.g., Stereo Mix)
-            print(f"  Opening input stream (channels={channels})")
-            return sd.InputStream(
-                device=self.device,
-                samplerate=sample_rate,
-                channels=channels,
-                blocksize=block_size,
-                dtype="float32",
+        if channels == 0:
+            raise ValueError(
+                f"Device '{dev_info['name']}' is output-only and cannot capture audio. "
+                f"Use an input device like Stereo Mix instead. "
+                f"Run with --list-devices to find one."
             )
+
+        print(f"  Opening input stream (channels={channels})")
+        return sd.InputStream(
+            device=self.device,
+            samplerate=sample_rate,
+            channels=channels,
+            blocksize=block_size,
+            dtype="float32",
+        )
 
     def _monitor_loop(self) -> None:
         """Background thread: read audio chunks and check for spikes."""
