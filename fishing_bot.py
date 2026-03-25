@@ -47,6 +47,8 @@ def main() -> None:
                         help="Hotkey to activate bot (default: F6)")
     parser.add_argument("--stop-key", default="f7",
                         help="Hotkey to pause bot (default: F7)")
+    parser.add_argument("--locate-delay", type=float, default=1.0,
+                        help="Seconds to wait before locating bobber after F6 (default: 1.0)")
     parser.add_argument("--list-devices", action="store_true",
                         help="List available audio devices and exit")
     args = parser.parse_args()
@@ -68,6 +70,7 @@ def main() -> None:
         audio_device=args.device,
         start_key=args.start_key,
         stop_key=args.stop_key,
+        locate_delay=args.locate_delay,
     )
     bot.run()
 

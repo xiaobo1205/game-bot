@@ -1,6 +1,7 @@
 """WoW fishing bot: sound-triggered catch with visual bobber location.
 
-Sound detects the splash moment. Template matching locates the bobber on screen.
+Sound detects the splash moment. Template matching locates the bobber on screen
+shortly after activation (not after the splash), and caches the position.
 """
 
 import random
@@ -21,6 +22,7 @@ from bot.input import move_human, click, press
 class State(Enum):
     IDLE = "idle"
     LOCATING = "locating"
+    LISTENING = "listening"
     CATCHING = "catching"
     LOOTING = "looting"
 
@@ -29,16 +31,17 @@ class FishingBot:
     """Sound-triggered fishing bot with visual bobber location.
 
     Flow:
-        1. Audio monitor listens for splash sound (volume spike)
-        2. On trigger → screenshot → find_template() to locate bobber
-        3. Move mouse to bobber → right-click → loot key
+        1. F6 pressed → wait 1s → screenshot → find bobber → cache position
+        2. Audio monitor listens for splash sound (volume spike)
+        3. On splash → move mouse to cached bobber position → right-click → loot
         4. Return to idle
 
     States:
-        IDLE     — waiting for audio trigger
-        LOCATING — screenshot taken, searching for bobber
-        CATCHING — moving mouse + right-clicking
-        LOOTING  — pressing loot key
+        IDLE      — waiting for F6 activation
+        LOCATING  — screenshot taken, searching for bobber
+        LISTENING — bobber found, waiting for audio trigger
+        CATCHING  — moving mouse + right-clicking
+        LOOTING   — pressing loot key
     """
 
     def __init__(
@@ -52,12 +55,14 @@ class FishingBot:
         audio_device: int | None = None,
         start_key: str = "f6",
         stop_key: str = "f7",
+        locate_delay: float = 1.0,
     ):
         # Vision: template for bobber location
         self.template = cv2.imread(template_path)
         if self.template is None:
             raise FileNotFoundError(f"Could not load template image: {template_path}")
         self.threshold = threshold
+        self.locate_delay = locate_delay
 
         # Screen capture
         self.screen = ScreenCapture(monitor=monitor)
@@ -81,14 +86,16 @@ class FishingBot:
         self.catch_count = 0
         self._running = False
         self._splash_event = threading.Event()
+        self._activate_event = threading.Event()
+        self._bobber_pos: tuple[int, int] | None = None
 
     def _activate(self) -> None:
-        self.audio.enabled = True
-        self.state = State.IDLE
-        print("Bot ACTIVE — listening for splash...")
+        self._activate_event.set()
 
     def _deactivate(self) -> None:
         self.audio.enabled = False
+        self._bobber_pos = None
+        self.state = State.IDLE
         print("Bot PAUSED")
 
     def _on_splash(self, rms: float, baseline: float) -> None:
@@ -98,7 +105,7 @@ class FishingBot:
         self._splash_event.set()
 
     def run(self) -> None:
-        """Start the bot. Idles until sound trigger fires."""
+        """Start the bot. Locates bobber on activation, then listens for splash."""
         self._running = True
         self.hotkeys.register()
         self.audio.start()
@@ -106,16 +113,16 @@ class FishingBot:
         h, w = self.template.shape[:2]
         print(f"Template loaded ({w}x{h}px), match threshold={self.threshold}")
         print(f"Loot key: {self.loot_key}")
+        print(f"Locate delay: {self.locate_delay}s after activation")
         print(f"Press {self.hotkeys.start_key.upper()} to start, "
               f"{self.hotkeys.stop_key.upper()} to stop, Ctrl+C to quit.")
 
         try:
             while self._running:
-                # Wait for splash event (check every 100ms for ctrl+c)
-                if self._splash_event.wait(timeout=0.1):
-                    self._splash_event.clear()
-                    if self.audio.enabled:
-                        self._handle_catch()
+                # Wait for F6 activation
+                if self._activate_event.wait(timeout=0.1):
+                    self._activate_event.clear()
+                    self._run_cycle()
         except KeyboardInterrupt:
             print("\nBot quit.")
         finally:
@@ -126,22 +133,47 @@ class FishingBot:
     def stop(self) -> None:
         self._running = False
 
-    def _handle_catch(self) -> None:
-        """Full catch sequence: locate bobber → move → click → loot."""
+    def _run_cycle(self) -> None:
+        """One full fishing cycle: locate bobber → listen for splash → catch."""
+        # Step 1: Wait, then locate bobber
         self.state = State.LOCATING
+        print(f"Bot ACTIVE - locating bobber in {self.locate_delay}s...")
+        time.sleep(self.locate_delay)
 
-        # Take screenshot and find bobber
         frame = self.screen.grab()
         matches = find_template(frame, self.template, self.threshold)
 
         if not matches:
-            print("  WARNING: Could not locate bobber on screen. Skipping.")
+            print("  WARNING: Could not locate bobber on screen. Press F6 to retry.")
             self.state = State.IDLE
             return
 
-        x, y = matches[0]
+        self._bobber_pos = matches[0]
+        x, y = self._bobber_pos
+        print(f"  Bobber found at ({x}, {y})")
+
+        # Step 2: Enable audio and listen for splash
+        self.state = State.LISTENING
+        self.audio.enabled = True
+        print("  Listening for splash...")
+
+        # Wait for splash (or F7 to deactivate)
+        while self._running and self.state == State.LISTENING:
+            if self._splash_event.wait(timeout=0.1):
+                self._splash_event.clear()
+                if self.state == State.LISTENING:
+                    self._handle_catch()
+
+    def _handle_catch(self) -> None:
+        """Catch sequence: move to cached bobber position → click → loot."""
+        if self._bobber_pos is None:
+            print("  WARNING: No bobber position cached. Skipping.")
+            self.state = State.IDLE
+            return
+
+        x, y = self._bobber_pos
         self.catch_count += 1
-        print(f"[#{self.catch_count}] Bobber at ({x}, {y}) — catching!")
+        print(f"[#{self.catch_count}] Moving to bobber at ({x}, {y})")
 
         # Move mouse to bobber with human-like path
         self.state = State.CATCHING
@@ -162,7 +194,9 @@ class FishingBot:
         press(self.loot_key)
         print(f"  Pressed '{self.loot_key}' to loot")
 
-        # Cooldown
+        # Done — back to idle (user presses F6 for next cast)
         time.sleep(random.uniform(0.3, 0.6))
+        self.audio.enabled = False
+        self._bobber_pos = None
         self.state = State.IDLE
-        print("  Resuming listen...")
+        print("  Done. Press F6 after next cast.")
