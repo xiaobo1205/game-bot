@@ -1,0 +1,6 @@
+mss>=9.0.0          # Fast screenshots
+opencv-python>=4.9  # Image analysis
+numpy>=1.26         # Pixel manipulation
+pyautogui>=0.9.54   # Mouse/keyboard control (fallback)
+pydirectinput>=1.0.4 # DirectInput for games that block pyautogui
+Pillow>=10.0        # Image processing
