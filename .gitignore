@@ -8,3 +8,7 @@ build/
 screenshots/
 templates/
 test_images/
+
+config.json
+debug_match.png
+debug_template.png
