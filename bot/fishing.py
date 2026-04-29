@@ -61,11 +61,11 @@ class FishingBot:
     def __init__(
         self,
         template_dir: str,
-        threshold: float = 0.6,
+        threshold: float = 0.5,
         volume_multiplier: float = 3.0,
         cooldown: float = 3.0,
         loot_key: str = "1",
-        cast_delay: float = 2.0,
+        cast_delay: float = 1.0,
         monitor: int = 1,
         audio_device: int | None = None,
         start_key: str = "f6",
@@ -378,7 +378,7 @@ class FishingBot:
         self.state = State.LISTENING
         self._splash_event.clear()
         listen_start = time.time()
-        listen_timeout = 27.0  # ~30s bobber lifetime minus warmup
+        listen_timeout = 18.0  # shorter than full bobber lifetime; re-cast on miss
         print(f"  Listening for splash (timeout {listen_timeout}s)...")
 
         # Wait for splash, F7, or timeout
