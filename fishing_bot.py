@@ -245,14 +245,15 @@ def main() -> None:
     )
     parser.add_argument("--template-dir", default="templates",
                         help="Directory containing bobber template images (default: templates/)")
-    parser.add_argument("--threshold", type=float, default=0.6,
-                        help="Template match confidence 0-1 (default: 0.6)")
+    parser.add_argument("--threshold", type=float, default=0.5,
+                        help="Template match confidence 0-1 (default: 0.5; "
+                             "falls back to highest score if no match clears it)")
     parser.add_argument("--volume-multiplier", type=float, default=3.0,
                         help="Volume spike threshold as multiplier of ambient (default: 3.0)")
     parser.add_argument("--cooldown", type=float, default=3.0,
                         help="Seconds between catch attempts (default: 3.0)")
-    parser.add_argument("--cast-delay", type=float, default=2.0,
-                        help="Seconds to wait after casting for bobber to land (default: 2.0)")
+    parser.add_argument("--cast-delay", type=float, default=1.0,
+                        help="Seconds to wait after casting for bobber to land (default: 1.0)")
     parser.add_argument("--loot-key", default="1",
                         help="Key to press after catching (default: '1')")
     parser.add_argument("--monitor", type=int, default=1,

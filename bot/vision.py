@@ -116,12 +116,15 @@ def find_template_multiscale(
         cv2.imwrite("debug_template.png", template)
         print("  [DEBUG] Saved debug_match.png and debug_template.png")
 
-    if best_score >= threshold:
-        cx = best_loc[0] + best_tw // 2
-        cy = best_loc[1] + best_th // 2
-        return [(cx, cy)]
+    if best_score < 0:
+        return []
 
-    return []
+    cx = best_loc[0] + best_tw // 2
+    cy = best_loc[1] + best_th // 2
+    if best_score < threshold:
+        print(f"  Template best score {best_score:.3f} below threshold {threshold}; "
+              f"using highest match anyway.")
+    return [(cx, cy)]
 
 
 def find_color_regions(frame: np.ndarray, lower_hsv: tuple, upper_hsv: tuple, min_area: int = 100) -> list[dict]:
