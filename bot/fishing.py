@@ -197,6 +197,9 @@ class FishingBot:
 
         px, py = self.pole_pos["x"], self.pole_pos["y"]
         print(f"\n  ** APPLYING BAUBLE **")
+        print(f"  Waiting 10s for previous lure buff to expire...")
+        time.sleep(10.0)
+
         print(f"  Selecting bauble (pressing 'i')...")
         press("i")
         time.sleep(random.uniform(0.5, 0.8))
@@ -207,7 +210,8 @@ class FishingBot:
 
         print(f"  Left-clicking fishing pole...")
         click(px, py, button="left")
-        time.sleep(random.uniform(0.8, 1.2))
+        print(f"  Waiting 10s for bauble cast to complete...")
+        time.sleep(10.0)
 
         self._last_bauble_time = time.time()
         self._bauble_count += 1
