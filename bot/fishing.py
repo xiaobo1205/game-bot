@@ -61,7 +61,7 @@ class FishingBot:
     def __init__(
         self,
         template_dir: str,
-        threshold: float = 0.5,
+        threshold: float = 0.6,
         volume_multiplier: float = 3.0,
         cooldown: float = 3.0,
         loot_key: str = "1",
@@ -197,9 +197,8 @@ class FishingBot:
 
         px, py = self.pole_pos["x"], self.pole_pos["y"]
         print(f"\n  ** APPLYING BAUBLE **")
-        print(f"  Waiting 10s for previous lure buff to expire...")
-        time.sleep(10.0)
-
+        print(f"  Waiting 30s for previous lure buff to expire...")
+        time.sleep(30.0)
         print(f"  Selecting bauble (pressing 'i')...")
         press("i")
         time.sleep(random.uniform(0.5, 0.8))
@@ -218,6 +217,8 @@ class FishingBot:
         remaining = self.max_sessions - self._bauble_count
         print(f"  Bauble applied ({self._bauble_count}/{self.max_sessions}). "
               f"{'Next in ' + str(int(self.bauble_interval / 60)) + 'min.' if remaining > 0 else 'Final session.'}")
+        print(f"  Waiting 10s before next fishing cycle...")
+        time.sleep(10.0)
 
     def _loop(self) -> None:
         """Auto-loop: cast → locate → listen → catch → loot → repeat until F7."""
